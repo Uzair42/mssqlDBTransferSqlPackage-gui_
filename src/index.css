@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-forest-950 text-emerald-50;
+  }
+}
+
+/* Custom Emerald Dark Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #040d07;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #143d26;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #1b5233;
+}
+
+.terminal-scroll {
+  scrollbar-color: #143d26 #040d07;
+  scrollbar-width: thin;
+}
