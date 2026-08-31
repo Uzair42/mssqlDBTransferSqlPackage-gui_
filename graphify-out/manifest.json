@@ -1,0 +1,122 @@
+{
+  "electron/downloader.ts": {
+    "mtime": 1787639232.5244246,
+    "seen": 1787828445.9158492,
+    "ast_hash": "934dabcda341399caa56a83578d1b368",
+    "semantic_hash": "934dabcda341399caa56a83578d1b368"
+  },
+  "electron/main.ts": {
+    "mtime": 1787729417.9883707,
+    "seen": 1787828445.9158566,
+    "ast_hash": "e7f8d5d44cbf793d3e9197853a86a4dd",
+    "semantic_hash": "e7f8d5d44cbf793d3e9197853a86a4dd"
+  },
+  "electron/preload.ts": {
+    "mtime": 1787651095.0366902,
+    "seen": 1787828445.9158597,
+    "ast_hash": "5d9ab030d3f49916bb62c4525d616817",
+    "semantic_hash": "5d9ab030d3f49916bb62c4525d616817"
+  },
+  "electron/runner.ts": {
+    "mtime": 1787729884.8417094,
+    "seen": 1787828445.9158616,
+    "ast_hash": "057c09b8897628343dd3796099654887",
+    "semantic_hash": "057c09b8897628343dd3796099654887"
+  },
+  "electron/sqlcmd.ts": {
+    "mtime": 1787654371.7528214,
+    "seen": 1787828445.915863,
+    "ast_hash": "e6432e603cd2ec32f776efc4ecd50f0b",
+    "semantic_hash": "e6432e603cd2ec32f776efc4ecd50f0b"
+  },
+  "package.json": {
+    "mtime": 1787646532.7297637,
+    "seen": 1787828445.9158645,
+    "ast_hash": "70e843500bd761c3b91846fda18b941f",
+    "semantic_hash": "70e843500bd761c3b91846fda18b941f"
+  },
+  "postcss.config.js": {
+    "mtime": 1787637235.0928507,
+    "seen": 1787828445.9158664,
+    "ast_hash": "854b38759e7a8b4b82306ae2d9a3a833",
+    "semantic_hash": "854b38759e7a8b4b82306ae2d9a3a833"
+  },
+  "src/App.tsx": {
+    "mtime": 1787729458.7327137,
+    "seen": 1787828445.9158676,
+    "ast_hash": "e0001c7525c0972a5fca868af6f38302",
+    "semantic_hash": "e0001c7525c0972a5fca868af6f38302"
+  },
+  "src/components/ConnectionForm.tsx": {
+    "mtime": 1787729441.6844385,
+    "seen": 1787828445.9158695,
+    "ast_hash": "a3aeaeb6edf4ccdfbef643e34f7a012c",
+    "semantic_hash": "a3aeaeb6edf4ccdfbef643e34f7a012c"
+  },
+  "src/components/DependencyModal.tsx": {
+    "mtime": 1787641956.9972887,
+    "seen": 1787828445.9158707,
+    "ast_hash": "2fee3ff8a9d039f0f9d2d40fe5ce8b30",
+    "semantic_hash": "2fee3ff8a9d039f0f9d2d40fe5ce8b30"
+  },
+  "src/components/Header.tsx": {
+    "mtime": 1787641929.975696,
+    "seen": 1787828445.9158726,
+    "ast_hash": "3955b0766ea9d7eb24c36e87e324c01d",
+    "semantic_hash": "3955b0766ea9d7eb24c36e87e324c01d"
+  },
+  "src/components/LogConsole.tsx": {
+    "mtime": 1787641947.6259162,
+    "seen": 1787828445.915874,
+    "ast_hash": "c7ba8588eac0368ec828385531d98551",
+    "semantic_hash": "c7ba8588eac0368ec828385531d98551"
+  },
+  "src/components/StatusBanner.tsx": {
+    "mtime": 1787641964.4637566,
+    "seen": 1787828445.9158757,
+    "ast_hash": "e71d7d3597448f706415677de8b25b12",
+    "semantic_hash": "e71d7d3597448f706415677de8b25b12"
+  },
+  "src/main.tsx": {
+    "mtime": 1787637256.8609416,
+    "seen": 1787828445.9158769,
+    "ast_hash": "237c00790ba23bfc7e572613f1c8ec47",
+    "semantic_hash": "237c00790ba23bfc7e572613f1c8ec47"
+  },
+  "src/types.ts": {
+    "mtime": 1787651112.8361828,
+    "seen": 1787828445.9158783,
+    "ast_hash": "6a674ebd4aeb40c8e8b0aa74f7890ed0",
+    "semantic_hash": "6a674ebd4aeb40c8e8b0aa74f7890ed0"
+  },
+  "tailwind.config.js": {
+    "mtime": 1787641914.4869628,
+    "seen": 1787828445.9158797,
+    "ast_hash": "25722e824648a68c73a4b4f740c9a6eb",
+    "semantic_hash": "25722e824648a68c73a4b4f740c9a6eb"
+  },
+  "tsconfig.json": {
+    "mtime": 1787637231.8648374,
+    "seen": 1787828445.9158812,
+    "ast_hash": "a3512912ceca856519f902774a640fa8",
+    "semantic_hash": "a3512912ceca856519f902774a640fa8"
+  },
+  "vite.config.ts": {
+    "mtime": 1787638011.10403,
+    "seen": 1787828445.9158826,
+    "ast_hash": "6cbfd90ae79b16297d6c59b6dd920975",
+    "semantic_hash": "6cbfd90ae79b16297d6c59b6dd920975"
+  },
+  "README.md": {
+    "mtime": 1787637281.7480454,
+    "seen": 1787828445.915884,
+    "ast_hash": "ae6b5183859c222f1f033171d5f249c5",
+    "semantic_hash": "ae6b5183859c222f1f033171d5f249c5"
+  },
+  "index.html": {
+    "mtime": 1787638028.9881015,
+    "seen": 1787828445.9158857,
+    "ast_hash": "bbd7f8bb1d33b26551400db5ef8f0195",
+    "semantic_hash": "bbd7f8bb1d33b26551400db5ef8f0195"
+  }
+}

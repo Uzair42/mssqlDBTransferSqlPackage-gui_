@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { Connection as TediousConnection, Request as TediousRequest } from 'tedious';
 
 // ---------------------------------------------------------------------------
@@ -11,6 +12,8 @@ export interface SqlcmdConnectionConfig {
   server: string;
   port: string;
   authType: 'sql' | 'windows';
+  useCurrentWindowsUser?: boolean;
+  domain?: string;
   username?: string;
   password?: string;
   trustServerCertificate: boolean;
@@ -61,6 +64,23 @@ function buildTediousConfig(cfg: SqlcmdConnectionConfig): any {
   const host = cfg.server.trim() || 'localhost';
   const port = parseInt(cfg.port.trim() || '1433', 10);
 
+  const authOptions: any = cfg.authType === 'windows'
+    ? {
+        type: 'ntlm',
+        options: {
+          domain: cfg.domain || '',
+          userName: cfg.username || '',
+          password: cfg.password || '',
+        },
+      }
+    : {
+        type: 'default',
+        options: {
+          userName: cfg.username || 'sa',
+          password: cfg.password || '',
+        },
+      };
+
   return {
     server: host,
     options: {
@@ -71,13 +91,7 @@ function buildTediousConfig(cfg: SqlcmdConnectionConfig): any {
       requestTimeout: 0,   // Infinite — backup/restore can take a long time
       encrypt: false,
     },
-    authentication: {
-      type: 'default',
-      options: {
-        userName: cfg.username || 'sa',
-        password: cfg.password || '',
-      },
-    },
+    authentication: authOptions,
   };
 }
 
@@ -103,6 +117,7 @@ export function getDefaultBackupDir(): string {
 
 /**
  * On Linux, copies .bak file into /var/opt/mssql/backup/ so MSSQL can access it.
+ * If permission denied (EACCES), uses pkexec to prompt user for root/sudo password in GUI.
  * Returns the path where MSSQL can read the .bak.
  */
 export function ensureBakAccessible(bakFilePath: string): { accessiblePath: string; copied: boolean; error?: string } {
@@ -126,21 +141,36 @@ export function ensureBakAccessible(bakFilePath: string): { accessiblePath: stri
     return { accessiblePath: bakFilePath, copied: false };
   }
 
+  // 1. Try standard unprivileged Node.js copy
   try {
-    // Ensure backup dir exists
     if (!fs.existsSync(backupDir)) {
       fs.mkdirSync(backupDir, { recursive: true });
     }
     fs.copyFileSync(bakFilePath, targetPath);
-    // Try to set permissions so mssql user can read it
-    try { fs.chmodSync(targetPath, '644'); } catch (_) {}
+    try { fs.chmodSync(targetPath, '666'); } catch (_) {}
     return { accessiblePath: targetPath, copied: true };
   } catch (err: any) {
-    return {
-      accessiblePath: bakFilePath,
-      copied: false,
-      error: `Could not copy .bak to ${backupDir}: ${err.message}. You may need to manually copy it with sudo.`,
-    };
+    // 2. Unprivileged copy failed (EACCES). Use pkexec to prompt user for OS root/sudo password!
+    try {
+      const escapedSrc = bakFilePath.replace(/'/g, "'\\''");
+      const escapedDst = targetPath.replace(/'/g, "'\\''");
+      const escapedDir = backupDir.replace(/'/g, "'\\''");
+
+      const cmd = `pkexec sh -c 'mkdir -p "${escapedDir}" && cp "${escapedSrc}" "${escapedDst}" && (chown mssql:mssql "${escapedDst}" || true) && chmod 666 "${escapedDst}"'`;
+      execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+
+      if (fs.existsSync(targetPath)) {
+        return { accessiblePath: targetPath, copied: true };
+      }
+    } catch (elevatedErr: any) {
+      return {
+        accessiblePath: bakFilePath,
+        copied: false,
+        error: `Could not copy .bak to ${backupDir} even with pkexec elevation: ${elevatedErr.message}.`,
+      };
+    }
+
+    return { accessiblePath: targetPath, copied: true };
   }
 }
 

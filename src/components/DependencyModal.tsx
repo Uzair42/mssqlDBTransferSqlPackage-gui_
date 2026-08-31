@@ -1,12 +1,12 @@
 import React from 'react';
 import {
-  DownloadCloud,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  HardDrive,
-  X,
-} from 'lucide-react';
+  DownloadCloudIcon,
+  CheckCircleIcon,
+  AlertTriangleIcon,
+  RefreshIcon,
+  HardDriveIcon,
+  CloseIcon,
+} from './icons/FeatureIcons';
 import { DownloadProgress } from '../types';
 
 interface DependencyModalProps {
@@ -39,7 +39,7 @@ export const DependencyModal: React.FC<DependencyModalProps> = ({
             onClick={onClose}
             className="absolute top-4 right-4 text-emerald-400/60 hover:text-white transition p-1"
           >
-            <X className="w-4 h-4" />
+            <CloseIcon className="w-4 h-4" />
           </button>
         )}
 
@@ -55,11 +55,11 @@ export const DependencyModal: React.FC<DependencyModalProps> = ({
             }`}
           >
             {isError ? (
-              <AlertTriangle className="w-7 h-7" />
+              <AlertTriangleIcon className="w-7 h-7" />
             ) : isCompleted ? (
-              <CheckCircle2 className="w-7 h-7" />
+              <CheckCircleIcon className="w-7 h-7" />
             ) : (
-              <DownloadCloud className="w-7 h-7 animate-pulse" />
+              <DownloadCloudIcon className="w-7 h-7 animate-pulse" />
             )}
           </div>
           <div>
@@ -102,7 +102,7 @@ export const DependencyModal: React.FC<DependencyModalProps> = ({
         {/* Details Box */}
         <div className="p-3 bg-forest-950/60 border border-forest-800 rounded-xl space-y-1.5 mb-6 text-xs font-mono text-emerald-300">
           <div className="flex items-center space-x-2">
-            <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+            <HardDriveIcon className="w-3.5 h-3.5 text-emerald-400" />
             <span>Target OS: {process.platform}</span>
           </div>
           <p className="text-[11px] text-emerald-400/60 leading-normal">
@@ -117,7 +117,7 @@ export const DependencyModal: React.FC<DependencyModalProps> = ({
               onClick={onRetry}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center space-x-2 transition shadow-lg shadow-emerald-950/50"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshIcon className="w-3.5 h-3.5" />
               <span>Retry Download</span>
             </button>
           )}

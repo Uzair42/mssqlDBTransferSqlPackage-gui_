@@ -6,11 +6,45 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
+    "build:linux": "tsc && vite build && electron-builder --linux AppImage deb",
+    "build:win": "tsc && vite build && electron-builder --win nsis portable",
+    "build:all": "tsc && vite build && electron-builder -lw",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "com.sqlpackage.gui",
+    "productName": "MSSQL Database Migrator",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "Uzair"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
-    "lucide-react": "^0.469.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tar": "^7.4.3",

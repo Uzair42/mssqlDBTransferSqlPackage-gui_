@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // System environment & server telemetry
+  getEnvironmentInfo: () => ipcRenderer.invoke('system:get-environment-info'),
+  fetchServerVersion: (config: any) => ipcRenderer.invoke('db:get-server-version', config),
+
   // sqlpackage engine
   checkSqlpackageStatus: () => ipcRenderer.invoke('sqlpackage:check-status'),
   downloadSqlpackage: () => ipcRenderer.invoke('sqlpackage:download'),

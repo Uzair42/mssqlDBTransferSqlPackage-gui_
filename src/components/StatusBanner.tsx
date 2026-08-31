@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { CheckCircleIcon, AlertCircleIcon, CloseIcon } from './icons/FeatureIcons';
 
 interface StatusBannerProps {
   status: { type: 'success' | 'error'; message: string } | null;
@@ -21,9 +21,9 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({ status, onDismiss })
     >
       <div className="flex items-center space-x-3">
         {isSuccess ? (
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <CheckCircleIcon className="w-5 h-5 text-emerald-400 shrink-0" />
         ) : (
-          <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+          <AlertCircleIcon className="w-5 h-5 text-red-400 shrink-0" />
         )}
         <span className="text-xs font-medium leading-relaxed">{status.message}</span>
       </div>
@@ -31,7 +31,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({ status, onDismiss })
         onClick={onDismiss}
         className="p-1 hover:bg-forest-900/50 rounded transition text-emerald-400/60 hover:text-white ml-3"
       >
-        <X className="w-4 h-4" />
+        <CloseIcon className="w-4 h-4" />
       </button>
     </div>
   );

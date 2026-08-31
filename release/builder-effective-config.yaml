@@ -1,0 +1,26 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.sqlpackage.gui
+productName: MSSQL Database Migrator
+files:
+  - filter:
+      - dist/**/*
+      - dist-electron/**/*
+      - package.json
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: Uzair
+win:
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+electronVersion: 33.4.11

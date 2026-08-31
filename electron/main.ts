@@ -15,6 +15,7 @@ import {
   RestoreBakConfig,
   SqlcmdConnectionConfig,
 } from './sqlcmd';
+import { getLocalMssqlEnvironment, fetchServerVersionDetails } from './systemInfo';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -77,6 +78,15 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// ─── IPC: System Environment & Server Telemetry ──────────────────────
+ipcMain.handle('system:get-environment-info', async () => {
+  return getLocalMssqlEnvironment();
+});
+
+ipcMain.handle('db:get-server-version', async (_event, config: any) => {
+  return await fetchServerVersionDetails(config);
 });
 
 // ─── IPC: sqlpackage engine ──────────────────────────────────────────
@@ -174,10 +184,12 @@ ipcMain.handle('dialog:open-file', async (_event, title?: string) => {
   if (!mainWindow) return null;
 
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: title || 'Select .bak Backup File',
+    title: title || 'Select Database Backup Archive (.bacpac or .bak)',
     filters: [
-      { name: 'SQL Server Backup', extensions: ['bak'] },
-      { name: 'All Files', extensions: ['*'] },
+      { name: 'Database Backup Files (*.bacpac, *.bak)', extensions: ['bacpac', 'bak'] },
+      { name: 'Data-tier Application Package (*.bacpac)', extensions: ['bacpac'] },
+      { name: 'SQL Server Backup (*.bak)', extensions: ['bak'] },
+      { name: 'All Files (*)', extensions: ['*'] },
     ],
     properties: ['openFile'],
   });

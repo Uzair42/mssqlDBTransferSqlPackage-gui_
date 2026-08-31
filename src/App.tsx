@@ -4,6 +4,8 @@ import { ConnectionForm } from './components/ConnectionForm';
 import { LogConsole } from './components/LogConsole';
 import { DependencyModal } from './components/DependencyModal';
 import { StatusBanner } from './components/StatusBanner';
+import { ProductTourModal } from './components/ProductTourModal';
+import { InteractiveWalkthrough } from './components/InteractiveWalkthrough';
 import {
   ConnectionConfig,
   ConnectionTestResult,
@@ -12,12 +14,17 @@ import {
   SqlpackageStatus,
   BakFileInfo,
   FileMove,
+  EnvironmentInfo,
+  ServerVersionInfo,
 } from './types';
 
 export function App() {
   const [engineStatus, setEngineStatus] = useState<SqlpackageStatus | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isDownloadingModalOpen, setIsDownloadingModalOpen] = useState(false);
+
+  const [envInfo, setEnvInfo] = useState<EnvironmentInfo | null>(null);
+  const [serverInfo, setServerInfo] = useState<ServerVersionInfo | null>(null);
 
   const [isRunning, setIsRunning] = useState(false);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -35,11 +42,19 @@ export function App() {
   const [fileMoves, setFileMoves] = useState<FileMove[]>([]);
   const [isFetchingFileList, setIsFetchingFileList] = useState(false);
 
+  // Guidance & Onboarding State
+  const [isTourModalOpen, setIsTourModalOpen] = useState(() => {
+    return localStorage.getItem('sqlpackage_gui_has_seen_tour') !== 'true';
+  });
+  const [isWalkthroughActive, setIsWalkthroughActive] = useState(false);
+  const [isGuideModeActive, setIsGuideModeActive] = useState(true);
+
   const [config, setConfig] = useState<ConnectionConfig>({
     action: 'Export',
     server: 'localhost',
     port: '1433',
     authType: 'sql',
+    useCurrentWindowsUser: false,
     username: 'sa',
     password: '',
     database: '',
@@ -86,6 +101,15 @@ export function App() {
     checkStatus();
     if (!window.electronAPI) return;
 
+    // Load pre-connection environment telemetry (local MSSQL & drivers)
+    if (typeof window.electronAPI.getEnvironmentInfo === 'function') {
+      window.electronAPI.getEnvironmentInfo().then((env) => {
+        setEnvInfo(env);
+      }).catch((err) => {
+        console.error('Failed to load environment info:', err);
+      });
+    }
+
     const unsubscribeLog = window.electronAPI.onSqlpackageLog((log) => {
       setLogs((prev) => [...prev, {
         id: Math.random().toString(36).substring(2, 9),
@@ -111,6 +135,9 @@ export function App() {
   const handleConfigChange = (updated: Partial<ConnectionConfig>) => {
     setConfig((prev) => ({ ...prev, ...updated }));
     if (testResult) setTestResult(null);
+    if (updated.server !== undefined || updated.port !== undefined || updated.authType !== undefined) {
+      setServerInfo(null);
+    }
   };
 
   const handleSelectSavePath = async () => {
@@ -126,11 +153,14 @@ export function App() {
 
   const handleSelectBakFile = async () => {
     if (!window.electronAPI) return;
-    const chosenPath = await window.electronAPI.selectOpenPath('Select .bak Backup File to Restore');
+    const chosenPath = await window.electronAPI.selectOpenPath('Select Database Backup Archive (.bacpac or .bak) to Restore');
     if (chosenPath) {
-      setConfig((prev) => ({ ...prev, targetFile: chosenPath }));
-      // Auto-fetch file list
-      await handleFetchFileList(chosenPath);
+      if (chosenPath.toLowerCase().endsWith('.bak')) {
+        setConfig((prev) => ({ ...prev, action: 'Restore_Bak', targetFile: chosenPath }));
+        await handleFetchFileList(chosenPath);
+      } else {
+        setConfig((prev) => ({ ...prev, action: 'Import', targetFile: chosenPath }));
+      }
     }
   };
 
@@ -148,6 +178,7 @@ export function App() {
         server: config.server,
         port: config.port,
         authType: config.authType,
+        domain: config.domain,
         username: config.username,
         password: config.password,
         trustServerCertificate: config.trustServerCertificate,
@@ -188,10 +219,21 @@ export function App() {
     setIsTestingConnection(true);
     setTestResult(null);
     try {
-      // For Backup/Restore_Bak, use Export action for testing since they use tedious directly
-      const testConfig = { ...config, action: 'Export' as const };
+      const testConfig = { ...config };
       const res = await window.electronAPI.testConnection(testConfig);
       setTestResult(res);
+      if (res.serverInfo) {
+        setServerInfo(res.serverInfo);
+        setLogs((prev) => [
+          ...prev,
+          {
+            id: Math.random().toString(36).substring(2, 9),
+            type: 'info',
+            timestamp: new Date().toISOString(),
+            content: `✓ Connected to ${res.serverInfo?.friendlyVersion} (Build ${res.serverInfo?.productVersion})\n  Active Session Driver: ${res.serverInfo?.activeDriver}\n  Engine Driver: ${res.serverInfo?.engineDriver}\n  Target Host: ${res.serverInfo?.machineName || config.server}:${res.serverInfo?.port} (SPID #${res.serverInfo?.spid || 'N/A'})`,
+          },
+        ]);
+      }
     } catch (err) {
       setTestResult({ success: false, message: 'Connection Test Failed', details: (err as Error).message });
     } finally {
@@ -223,6 +265,7 @@ export function App() {
           server: activeConfig.server,
           port: activeConfig.port,
           authType: activeConfig.authType,
+          domain: activeConfig.domain,
           username: activeConfig.username,
           password: activeConfig.password,
           trustServerCertificate: activeConfig.trustServerCertificate,
@@ -249,7 +292,7 @@ export function App() {
         activeConfig = { ...activeConfig, targetFile: chosenPath };
         setConfig(activeConfig);
         await handleFetchFileList(chosenPath);
-        return; // User needs to review file list first
+        return;
       }
 
       if (fileMoves.length === 0) {
@@ -266,6 +309,7 @@ export function App() {
           server: activeConfig.server,
           port: activeConfig.port,
           authType: activeConfig.authType,
+          domain: activeConfig.domain,
           username: activeConfig.username,
           password: activeConfig.password,
           trustServerCertificate: activeConfig.trustServerCertificate,
@@ -295,11 +339,19 @@ export function App() {
       activeConfig = { ...activeConfig, targetFile: chosenPath };
       setConfig(activeConfig);
     } else if (activeConfig.action === 'Import') {
-      if (!activeConfig.targetFile) {
-        const chosenPath = await window.electronAPI.selectSavePath('source_restore.bacpac', 'bacpac');
+      if (!activeConfig.targetFile || (!activeConfig.targetFile.includes('/') && !activeConfig.targetFile.includes('\\'))) {
+        const chosenPath = await window.electronAPI.selectOpenPath('Select Database Backup Archive (.bacpac or .bak) to Restore');
         if (!chosenPath) return;
-        activeConfig = { ...activeConfig, targetFile: chosenPath };
-        setConfig(activeConfig);
+
+        if (chosenPath.toLowerCase().endsWith('.bak')) {
+          activeConfig = { ...activeConfig, action: 'Restore_Bak', targetFile: chosenPath };
+          setConfig(activeConfig);
+          await handleFetchFileList(chosenPath);
+          return;
+        } else {
+          activeConfig = { ...activeConfig, targetFile: chosenPath };
+          setConfig(activeConfig);
+        }
       }
     }
 
@@ -335,8 +387,20 @@ export function App() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-forest-950 text-emerald-50 overflow-hidden font-sans">
-      <Header status={engineStatus} onRedownload={triggerDownload} />
+    <div className="h-screen flex flex-col bg-forest-950 text-emerald-50 overflow-hidden font-sans relative">
+      <Header
+        status={engineStatus}
+        onRedownload={triggerDownload}
+        envInfo={envInfo}
+        serverInfo={serverInfo}
+        onOpenTour={() => setIsTourModalOpen(true)}
+        onStartWalkthrough={() => {
+          setIsTourModalOpen(false);
+          setIsWalkthroughActive(true);
+        }}
+        isGuideModeActive={isGuideModeActive}
+        onToggleGuideMode={() => setIsGuideModeActive(!isGuideModeActive)}
+      />
 
       <main className="flex-1 p-5 grid grid-cols-12 gap-5 min-h-0">
         <div className="col-span-12 lg:col-span-5 xl:col-span-4 flex flex-col min-h-0 space-y-3">
@@ -361,6 +425,9 @@ export function App() {
               fileMoves={fileMoves}
               onFileMoveChange={setFileMoves}
               isFetchingFileList={isFetchingFileList}
+              envInfo={envInfo}
+              serverInfo={serverInfo}
+              isGuideModeActive={isGuideModeActive}
             />
           </div>
         </div>
@@ -375,6 +442,20 @@ export function App() {
         progress={downloadProgress}
         onRetry={triggerDownload}
         onClose={() => setIsDownloadingModalOpen(false)}
+      />
+
+      <ProductTourModal
+        isOpen={isTourModalOpen}
+        onClose={() => setIsTourModalOpen(false)}
+        onStartWalkthrough={() => {
+          setIsTourModalOpen(false);
+          setIsWalkthroughActive(true);
+        }}
+      />
+
+      <InteractiveWalkthrough
+        isActive={isWalkthroughActive}
+        onComplete={() => setIsWalkthroughActive(false)}
       />
     </div>
   );

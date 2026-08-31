@@ -3,6 +3,8 @@ export interface ConnectionConfig {
   server: string;
   port: string;
   authType: 'sql' | 'windows';
+  useCurrentWindowsUser?: boolean; // When true, uses Integrated Security / SSPI
+  domain?: string;                // Active Directory domain for NTLM
   username: string;
   password: string;
   database: string;
@@ -18,6 +20,13 @@ export interface ConnectionConfig {
   verifyExtraction: boolean;
 }
 
+export interface WalkthroughStep {
+  target: string;
+  title: string;
+  description: string;
+  position?: 'top' | 'bottom' | 'left' | 'right';
+}
+
 export interface BakFileInfo {
   logicalName: string;
   physicalName: string;
@@ -30,10 +39,44 @@ export interface FileMove {
   targetPath: string;
 }
 
+export interface EnvironmentInfo {
+  localMssqlInstalled: boolean;
+  localMssqlVersion?: string;
+  localMssqlFriendly?: string;
+  localMssqlStatus: 'active' | 'inactive' | 'not-installed';
+  activeClientDriver: string;
+  sqlpackageVersion?: string;
+  systemOdbcDrivers: string[];
+  nodeVersion: string;
+  osPlatform: string;
+}
+
+export interface ServerVersionInfo {
+  connected: boolean;
+  server: string;
+  port: string;
+  productVersion: string;
+  productMajorVersion: string;
+  friendlyVersion: string;
+  productLevel: string;
+  edition: string;
+  fullVersion: string;
+  machineName?: string;
+  instanceName?: string;
+  collation?: string;
+  spid?: number;
+  activeDriver: string;
+  engineDriver: string;
+  encryption: string;
+  authType: string;
+  connectedAt: string;
+}
+
 export interface ConnectionTestResult {
   success: boolean;
   message: string;
   details?: string;
+  serverInfo?: ServerVersionInfo;
 }
 
 export interface LogItem {
@@ -58,11 +101,15 @@ export interface SqlpackageStatus {
 declare global {
   interface Window {
     electronAPI: {
+      // System & Environment
+      getEnvironmentInfo: () => Promise<EnvironmentInfo>;
+      fetchServerVersion: (config: ConnectionConfig) => Promise<{ success: boolean; serverInfo?: ServerVersionInfo; message?: string }>;
+
       // sqlpackage engine
       checkSqlpackageStatus: () => Promise<SqlpackageStatus>;
       downloadSqlpackage: () => Promise<{ success: boolean; executablePath?: string; message?: string }>;
       testConnection: (config: ConnectionConfig) => Promise<ConnectionTestResult>;
-      fetchDatabases: (config: ConnectionConfig) => Promise<{ success: boolean; databases?: string[]; message?: string }>;
+      fetchDatabases: (config: ConnectionConfig) => Promise<{ success: boolean; databases?: string[]; serverInfo?: ServerVersionInfo; message?: string }>;
       exportDatabase: (config: ConnectionConfig) => Promise<{ success: boolean; message: string }>;
       cancelExport: () => Promise<{ success: boolean; message: string }>;
 
@@ -82,3 +129,4 @@ declare global {
     };
   }
 }
+

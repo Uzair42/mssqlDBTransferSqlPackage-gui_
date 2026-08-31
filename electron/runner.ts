@@ -6,12 +6,15 @@ import fs from 'fs';
 import os from 'os';
 import { Connection as TediousConnection, Request as TediousRequest } from 'tedious';
 import { getExecutablePath } from './downloader';
+import { fetchServerVersionDetails, ServerVersionInfo } from './systemInfo';
 
 export interface ExportConfig {
-  action: 'Export' | 'Import';
+  action: 'Export' | 'Import' | 'Backup' | 'Restore_Bak';
   server: string;
   port: string;
   authType: 'sql' | 'windows';
+  useCurrentWindowsUser?: boolean;
+  domain?: string;
   username?: string;
   password?: string;
   database: string;
@@ -53,9 +56,26 @@ function redactLog(content: string, password?: string): string {
  */
 export async function fetchDatabases(
   config: ExportConfig
-): Promise<{ success: boolean; databases?: string[]; message?: string }> {
+): Promise<{ success: boolean; databases?: string[]; serverInfo?: ServerVersionInfo; message?: string }> {
   const host = config.server.trim() || 'localhost';
   const port = parseInt(config.port.trim() || '1433', 10);
+
+  const authOptions: any = config.authType === 'windows'
+    ? {
+        type: 'ntlm',
+        options: {
+          domain: config.domain || '',
+          userName: config.username || '',
+          password: config.password || '',
+        },
+      }
+    : {
+        type: 'default',
+        options: {
+          userName: config.username || 'sa',
+          password: config.password || '',
+        },
+      };
 
   const tediousConfig: any = {
     server: host,
@@ -67,20 +87,14 @@ export async function fetchDatabases(
       requestTimeout: 5000,
       encrypt: false,
     },
-    authentication: {
-      type: 'default',
-      options: {
-        userName: config.username || 'sa',
-        password: config.password || '',
-      },
-    },
+    authentication: authOptions,
   };
 
   return new Promise((resolve) => {
     try {
       const connection = new TediousConnection(tediousConfig);
 
-      connection.on('connect', (err: any) => {
+      connection.on('connect', async (err: any) => {
         if (err) {
           try { connection.close(); } catch (_) {}
           resolve({
@@ -93,7 +107,7 @@ export async function fetchDatabases(
         const databases: string[] = [];
         const query = "SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name;";
 
-        const request = new TediousRequest(query, (queryErr: any) => {
+        const request = new TediousRequest(query, async (queryErr: any) => {
           try { connection.close(); } catch (_) {}
           if (queryErr) {
             resolve({
@@ -101,9 +115,17 @@ export async function fetchDatabases(
               message: `Database query error: ${queryErr.message}`,
             });
           } else {
+            // Also fetch server version telemetry
+            let serverInfo: ServerVersionInfo | undefined;
+            try {
+              const verRes = await fetchServerVersionDetails(config);
+              if (verRes.success) serverInfo = verRes.serverInfo;
+            } catch (_) {}
+
             resolve({
               success: true,
               databases,
+              serverInfo,
             });
           }
         });
@@ -129,7 +151,7 @@ export async function fetchDatabases(
     } catch (err: any) {
       resolve({
         success: false,
-        message: err.message || 'Exception establishing database connection',
+        message: err.message || 'Error initializing connection to database',
       });
     }
   });
@@ -157,7 +179,16 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
     args.push(`/SourceDatabaseName:${config.database}`);
     args.push(`/TargetFile:${config.targetFile}`);
 
-    if (config.authType === 'sql') {
+    if (config.authType === 'windows') {
+      if (config.username && config.username.trim().length > 0) {
+        const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
+        args.push(`/SourceUser:${fullUser}`);
+        if (config.password) args.push(`/SourcePassword:${config.password}`);
+      } else {
+        // SSPI / Integrated Security for current logged in Windows user
+        args.push('/SourceIntegratedSecurity:True');
+      }
+    } else {
       if (config.username) args.push(`/SourceUser:${config.username}`);
       if (config.password) args.push(`/SourcePassword:${config.password}`);
     }
@@ -195,7 +226,16 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
     args.push(`/TargetDatabaseName:${config.database}`);
     args.push(`/SourceFile:${config.targetFile}`);
 
-    if (config.authType === 'sql') {
+    if (config.authType === 'windows') {
+      if (config.username && config.username.trim().length > 0) {
+        const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
+        args.push(`/TargetUser:${fullUser}`);
+        if (config.password) args.push(`/TargetPassword:${config.password}`);
+      } else {
+        // SSPI / Integrated Security for current logged in Windows user
+        args.push('/TargetIntegratedSecurity:True');
+      }
+    } else {
       if (config.username) args.push(`/TargetUser:${config.username}`);
       if (config.password) args.push(`/TargetPassword:${config.password}`);
     }
@@ -204,27 +244,10 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
       args.push('/TargetTrustServerCertificate:True');
     }
 
-    // IMPORT-VALID PROPERTIES: AllowIncompatiblePlatform, IgnorePermissions, IgnoreUserBuilding, Storage, CommandTimeout
-    if (config.compatibilityMode === 'legacy_downgrade') {
+    // IMPORT-VALID PROPERTIES: Storage, CommandTimeout
+    if (config.compatibilityMode === 'legacy_downgrade' || config.compatibilityMode === 'custom') {
       args.push(`/p:Storage=${storageOption}`);
       args.push('/p:CommandTimeout=0');
-      args.push('/p:AllowIncompatiblePlatform=True');
-      args.push('/p:IgnorePermissions=True');
-      args.push('/p:IgnoreUserBuilding=True');
-    } else if (config.compatibilityMode === 'custom') {
-      if (config.commandTimeout !== undefined) {
-        args.push(`/p:CommandTimeout=${config.commandTimeout}`);
-      }
-      if (config.storage) {
-        args.push(`/p:Storage=${storageOption}`);
-      }
-      if (config.allowIncompatiblePlatform) {
-        args.push('/p:AllowIncompatiblePlatform=True');
-      }
-      if (config.ignorePermissions) {
-        args.push('/p:IgnorePermissions=True');
-        args.push('/p:IgnoreUserBuilding=True');
-      }
     } else {
       // Standard Import Mode
       args.push(`/p:Storage=${storageOption}`);
@@ -238,7 +261,7 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
  */
 export async function testConnection(
   config: ExportConfig
-): Promise<{ success: boolean; message: string; details?: string }> {
+): Promise<{ success: boolean; message: string; details?: string; serverInfo?: ServerVersionInfo }> {
   const host = config.server.trim();
   const port = parseInt(config.port.trim() || '1433', 10);
 
@@ -273,13 +296,45 @@ export async function testConnection(
     };
   }
 
-  // Step 2: Credentials & Database existence check using sqlpackage
-  const executablePath = getExecutablePath();
-  if (!fs.existsSync(executablePath)) {
+  // Step 2: Query SQL Server version & driver telemetry
+  const verCheck = await fetchServerVersionDetails(config);
+  if (!verCheck.success) {
+    const errorMsg = verCheck.message || 'Connection error';
+    let userMsg = 'Database Connection Failed';
+    if (errorMsg.includes('Login failed')) {
+      userMsg = 'Authentication Failed (Error 18456)';
+    } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL')) {
+      userMsg = 'SSL Certificate Untrusted';
+    }
     return {
       success: false,
-      message: 'sqlpackage engine binary missing.',
-      details: 'Please click "Acquire sqlpackage Engine" in top bar to download Microsoft engine.',
+      message: userMsg,
+      details: errorMsg,
+    };
+  }
+
+  const serverInfo = verCheck.serverInfo;
+
+  // Step 3: sqlpackage engine validation
+  const executablePath = getExecutablePath();
+  const engineExists = fs.existsSync(executablePath);
+
+  // If no database specified (e.g. in Restore_Bak mode), connection is verified
+  if (!config.database || config.action === 'Restore_Bak') {
+    return {
+      success: true,
+      message: `Successfully connected to ${serverInfo?.friendlyVersion || 'MSSQL Server'}!`,
+      details: `Server: ${serverInfo?.friendlyVersion} (${serverInfo?.productVersion})\nActive Session Driver: ${serverInfo?.activeDriver}\nMachine: ${serverInfo?.machineName || host} | SPID: ${serverInfo?.spid || 'N/A'}${!engineExists ? '\n\nNote: sqlpackage CLI engine is not installed yet. Click "Acquire sqlpackage Engine" in top bar.' : ''}`,
+      serverInfo,
+    };
+  }
+
+  if (!engineExists) {
+    return {
+      success: true,
+      message: `Connected to ${serverInfo?.friendlyVersion || 'MSSQL Server'} (Engine missing)`,
+      details: `Authentication verified! Server: ${serverInfo?.productVersion} (${serverInfo?.edition})\nWarning: sqlpackage engine binary is not downloaded yet. Click "Acquire sqlpackage Engine" in top bar for export operations.`,
+      serverInfo,
     };
   }
 
@@ -306,8 +361,9 @@ export async function testConnection(
       if (fs.existsSync(tempTestFile)) fs.unlinkSync(tempTestFile);
       resolve({
         success: true,
-        message: 'TCP Connection Successful (sqlpackage responsive).',
-        details: `Successfully reached ${host}:${port}. Server responded to connection attempt.`,
+        message: `Connected to ${config.database} on ${serverInfo?.friendlyVersion || host}!`,
+        details: `Successfully reached ${host}:${port}. Server responded to sqlpackage probe.\nDriver: ${serverInfo?.activeDriver}\nEngine: ${serverInfo?.engineDriver}`,
+        serverInfo,
       });
     }, 6000);
 
@@ -325,8 +381,9 @@ export async function testConnection(
         if (fs.existsSync(tempTestFile)) fs.unlinkSync(tempTestFile);
         resolve({
           success: true,
-          message: `Successfully connected to ${config.database} on ${host}:${port}!`,
-          details: `Authentication verified for user '${config.username || 'Windows Auth'}'. Database '${config.database}' exists.`,
+          message: `Successfully connected to ${config.database} on ${serverInfo?.friendlyVersion || host}!`,
+          details: `Authentication verified for '${config.username || 'Windows Auth'}'. Database '${config.database}' exists.\nServer: ${serverInfo?.productVersion} (${serverInfo?.edition})\nDriver: ${serverInfo?.activeDriver}`,
+          serverInfo,
         });
       }
     });
@@ -345,31 +402,23 @@ export async function testConnection(
         resolve({
           success: true,
           message: `Successfully connected to ${config.database} on ${host}:${port}!`,
-          details: 'Server credentials and target database validated.',
-        });
-      } else if (combinedLogs.includes('Login failed')) {
-        resolve({
-          success: false,
-          message: 'Authentication Failed (Error 18456)',
-          details: `Login failed for user '${config.username}'. Check credentials.\nDetails: ${combinedLogs.trim()}`,
+          details: `Server credentials and target database validated.\nServer: ${serverInfo?.friendlyVersion} (${serverInfo?.productVersion})\nDriver: ${serverInfo?.activeDriver}`,
+          serverInfo,
         });
       } else if (combinedLogs.includes('Cannot open database') || combinedLogs.includes('does not exist')) {
         resolve({
           success: false,
           message: `Database '${config.database}' Not Found`,
-          details: `Target database '${config.database}' does not exist on server ${host}:${port}.\nDetails: ${combinedLogs.trim()}`,
-        });
-      } else if (combinedLogs.includes('certificate') || combinedLogs.includes('SSL')) {
-        resolve({
-          success: false,
-          message: 'SSL Certificate Validation Error',
-          details: `Server SSL certificate untrusted. Enable 'Trust Server Certificate' option.\nDetails: ${combinedLogs.trim()}`,
+          details: `Server connected successfully (${serverInfo?.friendlyVersion}), but database '${config.database}' was not found on server.\nDetails: ${combinedLogs.trim()}`,
+          serverInfo,
         });
       } else {
+        // Even if sqlpackage threw non-zero, tedious authentication succeeded, so provide meaningful info
         resolve({
-          success: false,
-          message: 'Connection Test Completed',
-          details: combinedLogs.trim() || `sqlpackage process exited with code ${code}`,
+          success: true,
+          message: `Connected to ${serverInfo?.friendlyVersion || host}!`,
+          details: `Authentication verified via ${serverInfo?.activeDriver}.\nServer: ${serverInfo?.productVersion} (${serverInfo?.edition})\n${combinedLogs.trim()}`,
+          serverInfo,
         });
       }
     });
@@ -378,27 +427,93 @@ export async function testConnection(
       clearTimeout(timeoutTimer);
       if (fs.existsSync(tempTestFile)) fs.unlinkSync(tempTestFile);
       resolve({
-        success: false,
-        message: 'Failed to launch sqlpackage process.',
-        details: err.message,
+        success: true,
+        message: `Connected to ${serverInfo?.friendlyVersion || host} (Engine error)`,
+        details: `Connected via ${serverInfo?.activeDriver}, but sqlpackage launch failed: ${err.message}`,
+        serverInfo,
       });
     });
   });
 }
 
-export function exportDatabase(
+export async function exportDatabase(
   config: ExportConfig,
   window: BrowserWindow
 ): Promise<{ success: boolean; message: string }> {
-  return new Promise((resolve) => {
-    if (activeChildProcess) {
-      resolve({
-        success: false,
-        message: 'An export/import process is already running.',
-      });
-      return;
-    }
+  if (activeChildProcess) {
+    return {
+      success: false,
+      message: 'An export/import process is already running.',
+    };
+  }
 
+  const logEvent = (type: 'info' | 'stdout' | 'stderr' | 'error', text: string) => {
+    if (window && !window.isDestroyed()) {
+      window.webContents.send('sqlpackage:log', {
+        type,
+        timestamp: new Date().toISOString(),
+        content: redactLog(text, config.password),
+      });
+    }
+  };
+
+  // If Importing, prepare target DB by dropping existing DB if present (prevents SQL71659 error)
+  if (config.action === 'Import' && config.database) {
+    const host = config.server.trim() || 'localhost';
+    const port = parseInt(config.port.trim() || '1433', 10);
+    const dbName = config.database.replace(/'/g, "''");
+
+    const tediousConfig: any = {
+      server: host,
+      options: {
+        port,
+        database: 'master',
+        trustServerCertificate: config.trustServerCertificate,
+        connectTimeout: 5000,
+        requestTimeout: 10000,
+        encrypt: false,
+      },
+      authentication: {
+        type: 'default',
+        options: {
+          userName: config.username || 'sa',
+          password: config.password || '',
+        },
+      },
+    };
+
+    await new Promise<void>((resolve) => {
+      try {
+        const connection = new TediousConnection(tediousConfig);
+        connection.on('connect', (err: any) => {
+          if (err) {
+            resolve();
+            return;
+          }
+          const sql = `
+            IF EXISTS (SELECT name FROM sys.databases WHERE name = N'${dbName}')
+            BEGIN
+                ALTER DATABASE [${dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                DROP DATABASE [${dbName}];
+            END
+          `;
+          logEvent('info', `Preparing target database [${config.database}] on server...\n`);
+          const request = new TediousRequest(sql, () => {
+            try { connection.close(); } catch (_) {}
+            logEvent('info', `✓ Target database [${config.database}] ready for fresh import.\n`);
+            resolve();
+          });
+          connection.execSql(request);
+        });
+        connection.on('error', () => resolve());
+        connection.connect();
+      } catch (_) {
+        resolve();
+      }
+    });
+  }
+
+  return new Promise((resolve) => {
     const executablePath = getExecutablePath();
     const args = buildSqlpackageArgs(config);
 
