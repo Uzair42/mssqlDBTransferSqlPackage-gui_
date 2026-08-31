@@ -37,3 +37,5 @@ Thumbs.db
 # Temporary / Cache Files
 .cache/
 *.tmp
+release/sqlpackage-gui
+release/
