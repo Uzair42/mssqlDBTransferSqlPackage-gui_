@@ -16,6 +16,7 @@ linux:
   maintainer: Uzair
 win:
   target:
+    - zip
     - nsis
     - portable
 nsis:

@@ -738,10 +738,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         {/* ==================================================================== */}
         {(isExport || isImport) && (
           <div data-tour-downgrade-options="true" className="border border-forest-800 rounded-xl bg-forest-950/60 overflow-hidden relative">
-            <button
-              type="button"
+            <div
               onClick={() => setShowAdvancedDowngrade(!showAdvancedDowngrade)}
-              className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-forest-900/60 transition"
+              className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-forest-900/60 transition cursor-pointer select-none"
             >
               <div className="flex items-center space-x-2">
                 <DowngradeTuningIcon className="w-3.5 h-3.5 text-emerald-400" />
@@ -752,16 +751,22 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   {config.compatibilityMode === 'legacy_downgrade' ? 'Legacy Downgrade Preset' : config.compatibilityMode}
                 </span>
               </div>
-              <div className="flex items-center space-x-1">
+              <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
                 <Hotspot
                   isActive={isGuideModeActive}
                   title="Downgrade Tuning"
                   description="Enables Memory storage (/p:Storage=Memory) and removes timeouts to safely downgrade databases across major MSSQL versions."
                   position="left"
                 />
-                {showAdvancedDowngrade ? <ChevronUpIcon className="w-4 h-4 text-forest-400" /> : <ChevronDownIcon className="w-4 h-4 text-forest-400" />}
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedDowngrade(!showAdvancedDowngrade)}
+                  className="p-0.5 text-forest-400 hover:text-white"
+                >
+                  {showAdvancedDowngrade ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+                </button>
               </div>
-            </button>
+            </div>
 
             {showAdvancedDowngrade && (
               <div className="p-3 border-t border-forest-800 space-y-2.5 text-[11px] animate-in fade-in">
