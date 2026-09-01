@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -29,9 +30,12 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
+      - name: Compile Code
+        run: npx tsc && npx vite build
+
       - name: Build and Publish Release Assets
-        uses: samuelmeuli/action-electron-builder@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release: true
-          args: ${{ matrix.os == 'windows-latest' && '--win nsis portable' || '--linux AppImage deb' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx electron-builder --publish always ${{ matrix.os == 'windows-latest' && '--win nsis portable' || '--linux AppImage deb' }}
+
