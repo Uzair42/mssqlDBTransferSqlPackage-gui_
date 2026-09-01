@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Cross-Platform MSSQL BACPAC Export Desktop App",
   "main": "dist-electron/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Uzair42/mssqlDBTransferSqlPackage-gui_.git"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
@@ -14,6 +18,13 @@
   "build": {
     "appId": "com.sqlpackage.gui",
     "productName": "MSSQL Database Migrator",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Uzair42",
+        "repo": "mssqlDBTransferSqlPackage-gui_"
+      }
+    ],
     "directories": {
       "output": "release"
     },
