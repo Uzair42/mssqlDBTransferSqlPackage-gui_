@@ -3,6 +3,10 @@ directories:
   buildResources: build
 appId: com.sqlpackage.gui
 productName: MSSQL Database Migrator
+publish:
+  - provider: github
+    owner: Uzair42
+    repo: mssqlDBTransferSqlPackage-gui_
 files:
   - filter:
       - dist/**/*

@@ -242,7 +242,7 @@ export const InteractiveWalkthrough: React.FC<InteractiveWalkthroughProps> = ({
         </div>
 
         <h3 className="text-sm font-bold text-white mb-1.5">{currentStep.title}</h3>
-        <p className="text-xs text-emerald-200/90 leading-relaxed mb-4">
+        <p className="font-annie text-base text-emerald-200/90 leading-relaxed mb-4">
           {currentStep.description}
         </p>
 

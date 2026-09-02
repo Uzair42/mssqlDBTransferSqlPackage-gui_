@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Header } from './components/Header';
+import { Header, ThemeType } from './components/Header';
 import { ConnectionForm } from './components/ConnectionForm';
 import { LogConsole } from './components/LogConsole';
 import { DependencyModal } from './components/DependencyModal';
 import { StatusBanner } from './components/StatusBanner';
 import { ProductTourModal } from './components/ProductTourModal';
 import { InteractiveWalkthrough } from './components/InteractiveWalkthrough';
+import { FileTransferModal } from './components/FileTransferModal';
+import { SchemaViewerModal } from './components/SchemaViewerModal';
 import {
   ConnectionConfig,
   ConnectionTestResult,
@@ -19,9 +21,22 @@ import {
 } from './types';
 
 export function App() {
+  const [currentTheme, setCurrentTheme] = useState<ThemeType>(() => {
+    const saved = (localStorage.getItem('mssql_migrator_theme') || localStorage.getItem('nano_bana_theme')) as ThemeType;
+    return saved || 'theme-lime-coral';
+  });
+
+  const handleThemeChange = (newTheme: ThemeType) => {
+    setCurrentTheme(newTheme);
+    localStorage.setItem('mssql_migrator_theme', newTheme);
+  };
+
   const [engineStatus, setEngineStatus] = useState<SqlpackageStatus | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isDownloadingModalOpen, setIsDownloadingModalOpen] = useState(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
+  const [lastCreatedBackupPath, setLastCreatedBackupPath] = useState<string>('');
 
   const [envInfo, setEnvInfo] = useState<EnvironmentInfo | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerVersionInfo | null>(null);
@@ -97,280 +112,167 @@ export function App() {
     }
   }, []);
 
+  const fetchEnvInfo = useCallback(async () => {
+    try {
+      if (window.electronAPI?.getEnvironmentInfo) {
+        const info = await window.electronAPI.getEnvironmentInfo();
+        setEnvInfo(info);
+      }
+    } catch (err) {
+      console.error('Failed to fetch environment info:', err);
+    }
+  }, []);
+
   useEffect(() => {
     checkStatus();
+    fetchEnvInfo();
+
     if (!window.electronAPI) return;
 
-    // Load pre-connection environment telemetry (local MSSQL & drivers)
-    if (typeof window.electronAPI.getEnvironmentInfo === 'function') {
-      window.electronAPI.getEnvironmentInfo().then((env) => {
-        setEnvInfo(env);
-      }).catch((err) => {
-        console.error('Failed to load environment info:', err);
+    let unsubLog: (() => void) | undefined;
+    if (typeof window.electronAPI.onLog === 'function') {
+      unsubLog = window.electronAPI.onLog((item) => {
+        const logEntry: LogItem = {
+          id: (item as any).id || `${Date.now()}-${Math.random()}`,
+          timestamp: item.timestamp,
+          type: item.type,
+          content: item.content,
+        };
+        setLogs((prev) => [...prev, logEntry]);
+      });
+    } else if (typeof window.electronAPI.onSqlpackageLog === 'function') {
+      unsubLog = window.electronAPI.onSqlpackageLog((item) => {
+        const logEntry: LogItem = {
+          id: (item as any).id || `${Date.now()}-${Math.random()}`,
+          timestamp: item.timestamp,
+          type: item.type,
+          content: item.content,
+        };
+        setLogs((prev) => [...prev, logEntry]);
       });
     }
 
-    const unsubscribeLog = window.electronAPI.onSqlpackageLog((log) => {
-      setLogs((prev) => [...prev, {
-        id: Math.random().toString(36).substring(2, 9),
-        type: log.type as any,
-        timestamp: log.timestamp,
-        content: log.content,
-      }]);
-    });
-
-    const unsubscribeProgress = window.electronAPI.onDownloadProgress((prog) => {
-      setDownloadProgress(prog);
-      if (prog.status === 'completed') {
-        setTimeout(() => setIsDownloadingModalOpen(false), 1500);
-      }
-    });
+    let unsubProgress: (() => void) | undefined;
+    if (typeof window.electronAPI.onDownloadProgress === 'function') {
+      unsubProgress = window.electronAPI.onDownloadProgress((p: DownloadProgress) => {
+        setDownloadProgress(p);
+        if (p.status === 'completed') {
+          setTimeout(() => setIsDownloadingModalOpen(false), 1200);
+        }
+      });
+    }
 
     return () => {
-      if (unsubscribeLog) unsubscribeLog();
-      if (unsubscribeProgress) unsubscribeProgress();
+      if (typeof unsubLog === 'function') unsubLog();
+      if (typeof unsubProgress === 'function') unsubProgress();
     };
-  }, [checkStatus]);
+  }, [checkStatus, fetchEnvInfo]);
 
   const handleConfigChange = (updated: Partial<ConnectionConfig>) => {
     setConfig((prev) => ({ ...prev, ...updated }));
-    if (testResult) setTestResult(null);
-    if (updated.server !== undefined || updated.port !== undefined || updated.authType !== undefined) {
-      setServerInfo(null);
-    }
-  };
-
-  const handleSelectSavePath = async () => {
-    if (!window.electronAPI) return;
-    const isBak = config.action === 'Backup';
-    const ext = isBak ? 'bak' : 'bacpac';
-    const defaultName = config.database
-      ? `${config.database}_${new Date().toISOString().slice(0, 10)}.${ext}`
-      : `export.${ext}`;
-    const chosenPath = await window.electronAPI.selectSavePath(defaultName, ext);
-    if (chosenPath) setConfig((prev) => ({ ...prev, targetFile: chosenPath }));
-  };
-
-  const handleSelectBakFile = async () => {
-    if (!window.electronAPI) return;
-    const chosenPath = await window.electronAPI.selectOpenPath('Select Database Backup Archive (.bacpac or .bak) to Restore');
-    if (chosenPath) {
-      if (chosenPath.toLowerCase().endsWith('.bak')) {
-        setConfig((prev) => ({ ...prev, action: 'Restore_Bak', targetFile: chosenPath }));
-        await handleFetchFileList(chosenPath);
-      } else {
-        setConfig((prev) => ({ ...prev, action: 'Import', targetFile: chosenPath }));
-      }
-    }
-  };
-
-  const handleFetchFileList = async (bakPath?: string) => {
-    if (!window.electronAPI) return;
-    const filePath = bakPath || config.targetFile;
-    if (!filePath) return;
-
-    setIsFetchingFileList(true);
-    setBakFileList([]);
-    setFileMoves([]);
-
-    try {
-      const connConfig = {
-        server: config.server,
-        port: config.port,
-        authType: config.authType,
-        domain: config.domain,
-        username: config.username,
-        password: config.password,
-        trustServerCertificate: config.trustServerCertificate,
-      };
-
-      const res = await window.electronAPI.sqlcmdFileList(connConfig, filePath);
-      if (res.success && res.files && res.files.length > 0) {
-        setBakFileList(res.files);
-
-        // Auto-detect server default paths
-        const pathRes = await window.electronAPI.sqlcmdServerPaths(connConfig);
-        const dataDir = pathRes.dataPath || '/var/opt/mssql/data/';
-        const logDir = pathRes.logPath || dataDir;
-
-        // Auto-generate file move targets
-        const dbName = config.database || 'restored_db';
-        const moves: FileMove[] = res.files.map((f) => {
-          const ext = f.type === 'L' ? '_log.ldf' : '.mdf';
-          const dir = f.type === 'L' ? logDir : dataDir;
-          return {
-            logicalName: f.logicalName,
-            targetPath: `${dir}${dbName}${ext}`,
-          };
-        });
-        setFileMoves(moves);
-      } else {
-        setBannerStatus({ type: 'error', message: res.message || 'Could not read .bak file list.' });
-      }
-    } catch (err) {
-      setBannerStatus({ type: 'error', message: (err as Error).message });
-    } finally {
-      setIsFetchingFileList(false);
-    }
   };
 
   const handleTestConnection = async () => {
     if (!window.electronAPI) return;
     setIsTestingConnection(true);
     setTestResult(null);
+    setServerInfo(null);
+
     try {
-      const testConfig = { ...config };
-      const res = await window.electronAPI.testConnection(testConfig);
+      const res = await window.electronAPI.testConnection(config);
       setTestResult(res);
-      if (res.serverInfo) {
+
+      if (res.success && res.serverInfo) {
         setServerInfo(res.serverInfo);
-        setLogs((prev) => [
-          ...prev,
-          {
-            id: Math.random().toString(36).substring(2, 9),
-            type: 'info',
-            timestamp: new Date().toISOString(),
-            content: `✓ Connected to ${res.serverInfo?.friendlyVersion} (Build ${res.serverInfo?.productVersion})\n  Active Session Driver: ${res.serverInfo?.activeDriver}\n  Engine Driver: ${res.serverInfo?.engineDriver}\n  Target Host: ${res.serverInfo?.machineName || config.server}:${res.serverInfo?.port} (SPID #${res.serverInfo?.spid || 'N/A'})`,
-          },
-        ]);
       }
     } catch (err) {
-      setTestResult({ success: false, message: 'Connection Test Failed', details: (err as Error).message });
+      setTestResult({
+        success: false,
+        message: `Connection error: ${(err as Error).message}`,
+      });
     } finally {
       setIsTestingConnection(false);
     }
   };
 
-  const handleExport = async () => {
+  const handleSelectSavePath = async () => {
     if (!window.electronAPI) return;
-    let activeConfig = { ...config };
-
-    // ─── BACKUP .bak ───────────────────────────────────────────────
-    if (activeConfig.action === 'Backup') {
-      const ext = 'bak';
-      const defaultName = activeConfig.database
-        ? `${activeConfig.database}_${new Date().toISOString().slice(0, 10)}.${ext}`
-        : `backup.${ext}`;
-      const chosenPath = await window.electronAPI.selectSavePath(activeConfig.targetFile || defaultName, ext);
-      if (!chosenPath) return;
-
-      activeConfig = { ...activeConfig, targetFile: chosenPath };
-      setConfig(activeConfig);
-      setIsRunning(true);
-      setBannerStatus(null);
-      setLogs([]);
-
-      try {
-        const res = await window.electronAPI.sqlcmdBackup({
-          server: activeConfig.server,
-          port: activeConfig.port,
-          authType: activeConfig.authType,
-          domain: activeConfig.domain,
-          username: activeConfig.username,
-          password: activeConfig.password,
-          trustServerCertificate: activeConfig.trustServerCertificate,
-          database: activeConfig.database,
-          backupPath: chosenPath,
-        });
-        setBannerStatus({
-          type: res.success ? 'success' : 'error',
-          message: res.message,
-        });
-      } catch (err) {
-        setBannerStatus({ type: 'error', message: (err as Error).message });
-      } finally {
-        setIsRunning(false);
-      }
-      return;
+    const isBak = config.action === 'Backup';
+    const defaultName = config.database
+      ? `${config.database}_${new Date().toISOString().slice(0, 10)}.${isBak ? 'bak' : 'bacpac'}`
+      : `export_${new Date().toISOString().slice(0, 10)}.${isBak ? 'bak' : 'bacpac'}`;
+    const file = await window.electronAPI.selectSavePath(defaultName);
+    if (file) {
+      setConfig((prev) => ({ ...prev, targetFile: file }));
     }
+  };
 
-    // ─── RESTORE .bak ──────────────────────────────────────────────
-    if (activeConfig.action === 'Restore_Bak') {
-      if (!activeConfig.targetFile) {
-        const chosenPath = await window.electronAPI.selectOpenPath('Select .bak File to Restore');
-        if (!chosenPath) return;
-        activeConfig = { ...activeConfig, targetFile: chosenPath };
-        setConfig(activeConfig);
-        await handleFetchFileList(chosenPath);
-        return;
-      }
-
-      if (fileMoves.length === 0) {
-        setBannerStatus({ type: 'error', message: 'Please select a .bak file and wait for logical file detection before restoring.' });
-        return;
-      }
-
-      setIsRunning(true);
-      setBannerStatus(null);
-      setLogs([]);
-
-      try {
-        const res = await window.electronAPI.sqlcmdRestore({
-          server: activeConfig.server,
-          port: activeConfig.port,
-          authType: activeConfig.authType,
-          domain: activeConfig.domain,
-          username: activeConfig.username,
-          password: activeConfig.password,
-          trustServerCertificate: activeConfig.trustServerCertificate,
-          bakFilePath: activeConfig.targetFile,
-          targetDatabase: activeConfig.database,
-          fileMoves,
-        });
-        setBannerStatus({
-          type: res.success ? 'success' : 'error',
-          message: res.message,
-        });
-      } catch (err) {
-        setBannerStatus({ type: 'error', message: (err as Error).message });
-      } finally {
-        setIsRunning(false);
-      }
-      return;
-    }
-
-    // ─── EXPORT / IMPORT .bacpac ───────────────────────────────────
-    if (activeConfig.action === 'Export') {
-      const defaultName = activeConfig.database
-        ? `${activeConfig.database}_${new Date().toISOString().slice(0, 10)}.bacpac`
-        : 'export.bacpac';
-      const chosenPath = await window.electronAPI.selectSavePath(activeConfig.targetFile || defaultName, 'bacpac');
-      if (!chosenPath) return;
-      activeConfig = { ...activeConfig, targetFile: chosenPath };
-      setConfig(activeConfig);
-    } else if (activeConfig.action === 'Import') {
-      if (!activeConfig.targetFile || (!activeConfig.targetFile.includes('/') && !activeConfig.targetFile.includes('\\'))) {
-        const chosenPath = await window.electronAPI.selectOpenPath('Select Database Backup Archive (.bacpac or .bak) to Restore');
-        if (!chosenPath) return;
-
-        if (chosenPath.toLowerCase().endsWith('.bak')) {
-          activeConfig = { ...activeConfig, action: 'Restore_Bak', targetFile: chosenPath };
-          setConfig(activeConfig);
-          await handleFetchFileList(chosenPath);
-          return;
-        } else {
-          activeConfig = { ...activeConfig, targetFile: chosenPath };
-          setConfig(activeConfig);
-        }
+  const handleSelectBakFile = async () => {
+    if (!window.electronAPI) return;
+    const title = config.action === 'Import' ? 'Select .bacpac Archive File' : 'Select .bak Backup File';
+    const filterExt = config.action === 'Import' ? 'bacpac' : 'bak';
+    const file = await window.electronAPI.selectOpenPath(title, filterExt);
+    if (file) {
+      setConfig((prev) => ({ ...prev, targetFile: file }));
+      if (config.action === 'Restore_Bak') {
+        handleFetchFileList(file);
       }
     }
+  };
 
-    setIsRunning(true);
-    setBannerStatus(null);
-    setLogs([]);
-
-    const actionLabel = activeConfig.action === 'Export' ? 'Export .bacpac' : 'Import / Restore';
+  const handleFetchFileList = async (overrideBakPath?: string) => {
+    const target = overrideBakPath || config.targetFile;
+    if (!window.electronAPI || !target) return;
+    setIsFetchingFileList(true);
 
     try {
-      const res = await window.electronAPI.exportDatabase(activeConfig);
-      setBannerStatus({
-        type: res.success ? 'success' : 'error',
-        message: res.success
-          ? `Success! Database ${actionLabel} completed for ${activeConfig.database}.`
-          : res.message || `${actionLabel} failed.`,
-      });
+      const res = await window.electronAPI.fetchBakFileList(config, target);
+      if (res.success && res.files) {
+        setBakFileList(res.files);
+        setFileMoves(res.suggestedMoves || []);
+      } else {
+        setBannerStatus({
+          type: 'error',
+          message: `Failed to read .bak file list: ${res.message}`,
+        });
+      }
     } catch (err) {
-      setBannerStatus({ type: 'error', message: `Execution exception: ${(err as Error).message}` });
+      setBannerStatus({
+        type: 'error',
+        message: `Error reading .bak file list: ${(err as Error).message}`,
+      });
+    } finally {
+      setIsFetchingFileList(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!window.electronAPI) return;
+    setIsRunning(true);
+    setLogs([]);
+    setBannerStatus(null);
+
+    try {
+      const result = await window.electronAPI.runSqlpackage(config, fileMoves);
+      if (result.success) {
+        setBannerStatus({
+          type: 'success',
+          message: `${config.action} operation completed successfully! Output saved to: ${config.targetFile}`,
+        });
+        if (config.action === 'Backup' || config.action === 'Export') {
+          setLastCreatedBackupPath(config.targetFile);
+        }
+      } else {
+        setBannerStatus({
+          type: 'error',
+          message: `${config.action} failed: ${result.message || 'Check terminal log output below.'}`,
+        });
+      }
+    } catch (err) {
+      setBannerStatus({
+        type: 'error',
+        message: `Unexpected error: ${(err as Error).message}`,
+      });
     } finally {
       setIsRunning(false);
     }
@@ -378,16 +280,16 @@ export function App() {
 
   const handleCancel = async () => {
     if (!window.electronAPI) return;
-    try {
-      await window.electronAPI.cancelExport();
-      setBannerStatus({ type: 'error', message: 'Cancellation signal dispatched.' });
-    } catch (err) {
-      console.error('Failed to cancel:', err);
-    }
+    await window.electronAPI.cancelSqlpackage();
+    setIsRunning(false);
+    setBannerStatus({
+      type: 'error',
+      message: 'Operation cancelled by user.',
+    });
   };
 
   return (
-    <div className="h-screen flex flex-col bg-forest-950 text-emerald-50 overflow-hidden font-sans relative">
+    <div className={`h-screen flex flex-col bg-theme-bg text-theme-text overflow-hidden font-sans relative ${currentTheme}`}>
       <Header
         status={engineStatus}
         onRedownload={triggerDownload}
@@ -400,6 +302,10 @@ export function App() {
         }}
         isGuideModeActive={isGuideModeActive}
         onToggleGuideMode={() => setIsGuideModeActive(!isGuideModeActive)}
+        onOpenTransferModal={() => setIsTransferModalOpen(true)}
+        onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
+        currentTheme={currentTheme}
+        onThemeChange={handleThemeChange}
       />
 
       <main className="flex-1 p-5 grid grid-cols-12 gap-5 min-h-0">
@@ -428,6 +334,7 @@ export function App() {
               envInfo={envInfo}
               serverInfo={serverInfo}
               isGuideModeActive={isGuideModeActive}
+              onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
             />
           </div>
         </div>
@@ -451,6 +358,18 @@ export function App() {
           setIsTourModalOpen(false);
           setIsWalkthroughActive(true);
         }}
+      />
+
+      <FileTransferModal
+        isOpen={isTransferModalOpen}
+        onClose={() => setIsTransferModalOpen(false)}
+        defaultFilePath={lastCreatedBackupPath || config.targetFile}
+      />
+
+      <SchemaViewerModal
+        isOpen={isSchemaModalOpen}
+        onClose={() => setIsSchemaModalOpen(false)}
+        config={config}
       />
 
       <InteractiveWalkthrough

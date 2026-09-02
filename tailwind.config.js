@@ -7,23 +7,30 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        forest: {
-          950: '#040d07',
-          900: '#07170e',
-          850: '#0a2114',
-          800: '#0f2f1d',
-          700: '#143d26',
-          600: '#1b5233',
-        },
-        emerald: {
-          400: '#34d399',
-          500: '#10b981',
-          600: '#059669',
-          700: '#047857',
+        theme: {
+          bg: 'var(--theme-bg)',
+          surface: 'var(--theme-surface)',
+          card: 'var(--theme-card)',
+          cardHover: 'var(--theme-card-hover)',
+          border: 'var(--theme-border)',
+          text: 'var(--theme-text)',
+          muted: 'var(--theme-muted)',
+          accent: 'var(--theme-accent)',
+          accentEnd: 'var(--theme-accent-end)',
+          accentPrimary: 'var(--theme-accent-primary)',
+          accentSecondary: 'var(--theme-accent-secondary)',
+          accentTertiary: 'var(--theme-accent-tertiary)',
+          badgeExport: 'var(--theme-badge-export)',
+          badgeImport: 'var(--theme-badge-import)',
+          badgeBackup: 'var(--theme-badge-backup)',
+          badgeRestore: 'var(--theme-badge-restore)',
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
+        aladin: ['Aladin', 'cursive', 'sans-serif'],
+        annie: ['"Annie Use Your Telescope"', 'cursive', 'sans-serif'],
+        ballet: ['"Annie Use Your Telescope"', 'cursive', 'sans-serif'],
+        sans: ['Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace']
       }
     },

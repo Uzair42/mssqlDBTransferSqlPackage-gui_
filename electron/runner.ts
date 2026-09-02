@@ -157,6 +157,360 @@ export async function fetchDatabases(
   });
 }
 
+export interface TableColumnDetails {
+  columnName: string;
+  dataType: string;
+  maxLength: number | null;
+  isNullable: boolean;
+  ordinalPosition: number;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+}
+
+export interface TableRelationshipInfo {
+  constraintName: string;
+  fkSchema: string;
+  fkTable: string;
+  fkColumn: string;
+  fkFullName: string;
+  pkSchema: string;
+  pkTable: string;
+  pkColumn: string;
+  pkFullName: string;
+}
+
+export interface TableSchemaInfo {
+  schemaName: string;
+  tableName: string;
+  fullName: string;
+  rowCount: number;
+  columns: TableColumnDetails[];
+}
+
+export async function fetchDatabaseSchema(
+  config: ExportConfig,
+  databaseName?: string
+): Promise<{ success: boolean; tables?: TableSchemaInfo[]; relationships?: TableRelationshipInfo[]; message?: string }> {
+  const host = config.server.trim() || 'localhost';
+  const port = parseInt(config.port.trim() || '1433', 10);
+  const targetDb = databaseName || config.database || 'master';
+
+  const authOptions: any = config.authType === 'windows'
+    ? {
+        type: 'ntlm',
+        options: {
+          domain: config.domain || '',
+          userName: config.username || '',
+          password: config.password || '',
+        },
+      }
+    : {
+        type: 'default',
+        options: {
+          userName: config.username || 'sa',
+          password: config.password || '',
+        },
+      };
+
+  const tediousConfig: any = {
+    server: host,
+    options: {
+      port: port,
+      database: targetDb,
+      trustServerCertificate: config.trustServerCertificate,
+      connectTimeout: 5000,
+      requestTimeout: 15000,
+      encrypt: false,
+    },
+    authentication: authOptions,
+  };
+
+  return new Promise((resolve) => {
+    try {
+      const connection = new TediousConnection(tediousConfig);
+
+      connection.on('connect', (err: any) => {
+        if (err) {
+          try { connection.close(); } catch (_) {}
+          resolve({
+            success: false,
+            message: `Failed to connect to database '${targetDb}': ${err.message}`,
+          });
+          return;
+        }
+
+        const schemaMap = new Map<string, TableSchemaInfo>();
+        const relationships: TableRelationshipInfo[] = [];
+
+        const schemaQuery = `
+          SELECT 
+            t.TABLE_SCHEMA, 
+            t.TABLE_NAME, 
+            c.COLUMN_NAME, 
+            c.DATA_TYPE, 
+            c.CHARACTER_MAXIMUM_LENGTH, 
+            c.IS_NULLABLE,
+            c.ORDINAL_POSITION,
+            CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK,
+            CASE WHEN fk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_FK,
+            ISNULL(p.rows, 0) AS ROW_COUNT
+          FROM INFORMATION_SCHEMA.TABLES t
+          JOIN INFORMATION_SCHEMA.COLUMNS c 
+            ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+          LEFT JOIN sys.tables st ON st.name = t.TABLE_NAME AND SCHEMA_NAME(st.schema_id) = t.TABLE_SCHEMA
+          LEFT JOIN sys.partitions p ON st.object_id = p.object_id AND p.index_id IN (0, 1)
+          LEFT JOIN (
+            SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+            WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+          ) pk ON c.TABLE_SCHEMA = pk.TABLE_SCHEMA AND c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
+          LEFT JOIN (
+            SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+            WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY'
+          ) fk ON c.TABLE_SCHEMA = fk.TABLE_SCHEMA AND c.TABLE_NAME = fk.TABLE_NAME AND c.COLUMN_NAME = fk.COLUMN_NAME
+          WHERE t.TABLE_TYPE = 'BASE TABLE'
+          ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION;
+        `;
+
+        const fkQuery = `
+          SELECT 
+            fk.name AS constraint_name,
+            OBJECT_SCHEMA_NAME(fk.parent_object_id) AS fk_schema,
+            OBJECT_NAME(fk.parent_object_id) AS fk_table,
+            col1.name AS fk_column,
+            OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS pk_schema,
+            OBJECT_NAME(fk.referenced_object_id) AS pk_table,
+            col2.name AS pk_column
+          FROM sys.foreign_keys fk
+          JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+          JOIN sys.columns col1 ON fkc.parent_object_id = col1.object_id AND fkc.parent_column_id = col1.column_id
+          JOIN sys.columns col2 ON fkc.referenced_object_id = col2.object_id AND fkc.referenced_column_id = col2.column_id;
+        `;
+
+        const requestSchema = new TediousRequest(schemaQuery, (queryErr: any) => {
+          if (queryErr) {
+            try { connection.close(); } catch (_) {}
+            resolve({
+              success: false,
+              message: `Schema query error: ${queryErr.message}`,
+            });
+            return;
+          }
+
+          // Next query foreign keys
+          const requestFK = new TediousRequest(fkQuery, (fkErr: any) => {
+            try { connection.close(); } catch (_) {}
+            const tables = Array.from(schemaMap.values());
+            if (fkErr) {
+              // Return tables even if FK query fails gracefully
+              resolve({ success: true, tables, relationships: [] });
+            } else {
+              resolve({ success: true, tables, relationships });
+            }
+          });
+
+          requestFK.on('row', (cols: any[]) => {
+            const constraintName = cols[0]?.value || 'FK';
+            const fkSchema = cols[1]?.value || 'dbo';
+            const fkTable = cols[2]?.value || '';
+            const fkColumn = cols[3]?.value || '';
+            const pkSchema = cols[4]?.value || 'dbo';
+            const pkTable = cols[5]?.value || '';
+            const pkColumn = cols[6]?.value || '';
+
+            if (fkTable && pkTable) {
+              relationships.push({
+                constraintName,
+                fkSchema,
+                fkTable,
+                fkColumn,
+                fkFullName: `${fkSchema}.${fkTable}`,
+                pkSchema,
+                pkTable,
+                pkColumn,
+                pkFullName: `${pkSchema}.${pkTable}`,
+              });
+            }
+          });
+
+          connection.execSql(requestFK);
+        });
+
+        requestSchema.on('row', (columns: any[]) => {
+          const schemaName = columns[0]?.value || 'dbo';
+          const tableName = columns[1]?.value;
+          const columnName = columns[2]?.value;
+          const dataType = columns[3]?.value || 'varchar';
+          const maxLength = columns[4]?.value;
+          const isNullable = columns[5]?.value === 'YES';
+          const ordinalPosition = columns[6]?.value || 0;
+          const isPrimaryKey = columns[7]?.value === 1;
+          const isForeignKey = columns[8]?.value === 1;
+          const rowCount = Number(columns[9]?.value || 0);
+
+          if (!tableName || !columnName) return;
+
+          const key = `${schemaName}.${tableName}`;
+          if (!schemaMap.has(key)) {
+            schemaMap.set(key, {
+              schemaName,
+              tableName,
+              fullName: key,
+              rowCount,
+              columns: [],
+            });
+          }
+
+          const table = schemaMap.get(key)!;
+          table.columns.push({
+            columnName,
+            dataType,
+            maxLength: maxLength !== undefined ? maxLength : null,
+            isNullable,
+            ordinalPosition,
+            isPrimaryKey,
+            isForeignKey,
+          });
+        });
+
+        connection.execSql(requestSchema);
+      });
+
+      connection.on('error', (err: any) => {
+        resolve({
+          success: false,
+          message: err.message || 'Database connection error during schema fetch',
+        });
+      });
+
+      connection.connect();
+    } catch (err: any) {
+      resolve({
+        success: false,
+        message: err.message || 'Error initializing connection for schema',
+      });
+    }
+  });
+}
+
+export async function fetchTableData(
+  config: ExportConfig,
+  schemaName: string,
+  tableName: string,
+  databaseName?: string,
+  limit = 50
+): Promise<{ success: boolean; columns?: string[]; rows?: any[]; message?: string }> {
+  const host = config.server.trim() || 'localhost';
+  const port = parseInt(config.port.trim() || '1433', 10);
+  const targetDb = databaseName || config.database || 'master';
+
+  const authOptions: any = config.authType === 'windows'
+    ? {
+        type: 'ntlm',
+        options: {
+          domain: config.domain || '',
+          userName: config.username || '',
+          password: config.password || '',
+        },
+      }
+    : {
+        type: 'default',
+        options: {
+          userName: config.username || 'sa',
+          password: config.password || '',
+        },
+      };
+
+  const tediousConfig: any = {
+    server: host,
+    options: {
+      port: port,
+      database: targetDb,
+      trustServerCertificate: config.trustServerCertificate,
+      connectTimeout: 5000,
+      requestTimeout: 15000,
+      encrypt: false,
+    },
+    authentication: authOptions,
+  };
+
+  const safeSchema = schemaName.replace(/\]/g, ']]');
+  const safeTable = tableName.replace(/\]/g, ']]');
+
+  return new Promise((resolve) => {
+    try {
+      const connection = new TediousConnection(tediousConfig);
+
+      connection.on('connect', (err: any) => {
+        if (err) {
+          try { connection.close(); } catch (_) {}
+          resolve({
+            success: false,
+            message: `Failed to connect to '${targetDb}': ${err.message}`,
+          });
+          return;
+        }
+
+        const columns: string[] = [];
+        const rows: any[] = [];
+        const query = `SELECT TOP ${Math.min(limit, 200)} * FROM [${safeSchema}].[${safeTable}];`;
+
+        const request = new TediousRequest(query, (queryErr: any) => {
+          try { connection.close(); } catch (_) {}
+          if (queryErr) {
+            resolve({
+              success: false,
+              message: `Data query error: ${queryErr.message}`,
+            });
+          } else {
+            resolve({
+              success: true,
+              columns,
+              rows,
+            });
+          }
+        });
+
+        request.on('row', (rowCols: any[]) => {
+          if (columns.length === 0) {
+            rowCols.forEach((col) => {
+              if (col.metadata && col.metadata.colName) {
+                columns.push(col.metadata.colName);
+              }
+            });
+          }
+
+          const rowObj: any = {};
+          rowCols.forEach((col, idx) => {
+            const colName = col.metadata?.colName || `col_${idx}`;
+            rowObj[colName] = col.value !== null && col.value !== undefined ? String(col.value) : null;
+          });
+          rows.push(rowObj);
+        });
+
+        connection.execSql(request);
+      });
+
+      connection.on('error', (err: any) => {
+        resolve({
+          success: false,
+          message: err.message || 'Database connection error during table data fetch',
+        });
+      });
+
+      connection.connect();
+    } catch (err: any) {
+      resolve({
+        success: false,
+        message: err.message || 'Error initializing connection for table data',
+      });
+    }
+  });
+}
+
 /**
  * Builds array of command line arguments for sqlpackage strictly enforcing
  * valid properties for /action:Export vs /action:Import vs /action:Script.
@@ -180,13 +534,13 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
     args.push(`/TargetFile:${config.targetFile}`);
 
     if (config.authType === 'windows') {
-      if (config.username && config.username.trim().length > 0) {
+      if (config.useCurrentWindowsUser || !config.username || config.username.trim().length === 0) {
+        // SSPI / Integrated Security for current logged in Windows user
+        args.push('/SourceIntegratedSecurity:True');
+      } else {
         const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
         args.push(`/SourceUser:${fullUser}`);
         if (config.password) args.push(`/SourcePassword:${config.password}`);
-      } else {
-        // SSPI / Integrated Security for current logged in Windows user
-        args.push('/SourceIntegratedSecurity:True');
       }
     } else {
       if (config.username) args.push(`/SourceUser:${config.username}`);
@@ -227,13 +581,13 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
     args.push(`/SourceFile:${config.targetFile}`);
 
     if (config.authType === 'windows') {
-      if (config.username && config.username.trim().length > 0) {
+      if (config.useCurrentWindowsUser || !config.username || config.username.trim().length === 0) {
+        // SSPI / Integrated Security for current logged in Windows user
+        args.push('/TargetIntegratedSecurity:True');
+      } else {
         const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
         args.push(`/TargetUser:${fullUser}`);
         if (config.password) args.push(`/TargetPassword:${config.password}`);
-      } else {
-        // SSPI / Integrated Security for current logged in Windows user
-        args.push('/TargetIntegratedSecurity:True');
       }
     } else {
       if (config.username) args.push(`/TargetUser:${config.username}`);
@@ -301,15 +655,22 @@ export async function testConnection(
   if (!verCheck.success) {
     const errorMsg = verCheck.message || 'Connection error';
     let userMsg = 'Database Connection Failed';
+    let detailedHelp = errorMsg;
+
     if (errorMsg.includes('Login failed')) {
       userMsg = 'Authentication Failed (Error 18456)';
-    } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL')) {
+    } else if (errorMsg.includes('certificate') || errorMsg.includes('SSL') || errorMsg.includes('PKIX')) {
       userMsg = 'SSL Certificate Untrusted';
+      detailedHelp += '\n\nFix: Enable "Trust Server Certificate" checkbox in the connection options.';
+    } else if (errorMsg.toLowerCase().includes('untrusted domain') || errorMsg.includes('target principal') || errorMsg.includes('SSPI')) {
+      userMsg = 'Untrusted Domain / SSPI Context Error';
+      detailedHelp += '\n\nWhy this happens:\nYour computer is not joined to the Active Directory domain of the target MSSQL Server, or Windows Integrated Security (SSPI) cannot validate the domain controller.\n\nHow to Fix:\n1. Check "Trust Server Certificate" checkbox.\n2. In Windows Auth options, check "Specify Domain User" and enter your DOMAIN\\username.\n3. Or switch Authentication Mode to "SQL Server Auth" (using sa account).';
     }
+
     return {
       success: false,
       message: userMsg,
-      details: errorMsg,
+      details: detailedHelp,
     };
   }
 

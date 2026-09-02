@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import {
   checkSqlpackageStatus,
   downloadAndExtractSqlpackage,
 } from './downloader';
-import { exportDatabase, cancelExport, testConnection, fetchDatabases, ExportConfig } from './runner';
+import { exportDatabase, cancelExport, testConnection, fetchDatabases, fetchDatabaseSchema, fetchTableData, ExportConfig } from './runner';
 import {
   backupDatabase,
   restoreDatabase,
@@ -16,10 +16,22 @@ import {
   SqlcmdConnectionConfig,
 } from './sqlcmd';
 import { getLocalMssqlEnvironment, fetchServerVersionDetails } from './systemInfo';
+import {
+  startWiFiServer,
+  stopWiFiServer,
+  getWiFiServerStatus,
+  getNetworkInterfaces,
+  triggerBluetoothSend,
+} from './transfer';
 
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
+  // Remove default top menu bar in production release
+  if (app.isPackaged) {
+    Menu.setApplicationMenu(null);
+  }
+
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 800,
@@ -27,12 +39,21 @@ function createWindow() {
     minHeight: 700,
     title: 'MSSQL Database Migrator',
     backgroundColor: '#05120a',
+    show: false, // Prevent white/blank screen flicker on application startup
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      devTools: !app.isPackaged, // Strictly disable DevTools in production release builds
     },
+  });
+
+  // Reveal window smoothly once DOM is rendered and styled
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+    }
   });
 
   mainWindow.webContents.on('console-message', (_event, _level, message, line, sourceId) => {
@@ -41,6 +62,28 @@ function createWindow() {
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error(`[Load Error ${errorCode}] ${errorDescription} on ${validatedURL}`);
+    // Auto-retry in dev server mode if server was still binding
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+    if (devServerUrl && mainWindow && !mainWindow.isDestroyed()) {
+      setTimeout(() => {
+        mainWindow?.loadURL(devServerUrl);
+      }, 1000);
+    }
+  });
+
+  // Intercept DevTools and reload keyboard shortcuts in production release
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (app.isPackaged) {
+      const key = input.key.toLowerCase();
+      if (
+        input.key === 'F12' ||
+        (input.control && input.shift && key === 'i') ||
+        (input.control && key === 'r') ||
+        input.key === 'F5'
+      ) {
+        event.preventDefault();
+      }
+    }
   });
 
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -116,6 +159,15 @@ ipcMain.handle('sqlpackage:test-connection', async (_event, config: ExportConfig
 // ─── IPC: Fetch Online Databases ─────────────────────────────────────
 ipcMain.handle('db:fetch-databases', async (_event, config: ExportConfig) => {
   return await fetchDatabases(config);
+});
+
+// ─── IPC: Fetch Database Schema & Table Preview ──────────────────────
+ipcMain.handle('db:fetch-schema', async (_event, config: ExportConfig, databaseName?: string) => {
+  return await fetchDatabaseSchema(config, databaseName);
+});
+
+ipcMain.handle('db:fetch-table-data', async (_event, config: ExportConfig, schemaName: string, tableName: string, databaseName?: string, limit?: number) => {
+  return await fetchTableData(config, schemaName, tableName, databaseName, limit);
 });
 
 // ─── IPC: sqlpackage Export/Import ───────────────────────────────────
@@ -196,4 +248,25 @@ ipcMain.handle('dialog:open-file', async (_event, title?: string) => {
 
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
+});
+
+// ─── IPC: Backup File Transfer (Wi-Fi & Bluetooth) ────────────────────
+ipcMain.handle('transfer:start-wifi-server', async (_event, filePath: string, port?: number) => {
+  return await startWiFiServer(filePath, port || 8080, mainWindow || undefined);
+});
+
+ipcMain.handle('transfer:stop-wifi-server', async () => {
+  return await stopWiFiServer(mainWindow || undefined);
+});
+
+ipcMain.handle('transfer:get-wifi-status', async () => {
+  return getWiFiServerStatus();
+});
+
+ipcMain.handle('transfer:get-network-ips', async () => {
+  return getNetworkInterfaces();
+});
+
+ipcMain.handle('transfer:trigger-bluetooth', async (_event, filePath: string) => {
+  return await triggerBluetoothSend(filePath);
 });

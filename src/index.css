@@ -2,32 +2,179 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   5 USER-SPECIFIED HIGH-CONTRAST GRADIENT THEMES (MULTI-ACCENT SYSTEM)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root,
+.theme-lime-coral {
+  --theme-bg: #0b0f0c;
+  --theme-surface: #131915;
+  --theme-card: #1b231d;
+  --theme-card-hover: #222e26;
+  --theme-border: #2c3930;
+  --theme-text: #ffffff;
+  --theme-muted: #cbd5e1;
+  --theme-accent: hsla(94, 100%, 70%, 1);
+  --theme-accent-end: hsla(0, 100%, 77%, 1);
+  --theme-accent-primary: #a9ff68;
+  --theme-accent-secondary: #ff8989;
+  --theme-accent-tertiary: #ffd166;
+  --theme-badge-export: #a9ff68;
+  --theme-badge-import: #46edf3;
+  --theme-badge-backup: #ff8989;
+  --theme-badge-restore: #c095e4;
+  --theme-gradient: linear-gradient(90deg, hsla(94, 100%, 70%, 1) 0%, hsla(0, 100%, 77%, 1) 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, hsla(94, 100%, 70%, 1) 0%, hsla(0, 100%, 77%, 1) 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(94, 100%, 70%, 1) 0%, hsla(0, 100%, 77%, 1) 100%);
+}
+
+.theme-mint-emerald {
+  --theme-bg: #05140b;
+  --theme-surface: #0a2113;
+  --theme-card: #112f1c;
+  --theme-card-hover: #173d25;
+  --theme-border: #1d462b;
+  --theme-text: #ffffff;
+  --theme-muted: #c2e7d0;
+  --theme-accent: hsla(145, 84%, 73%, 1);
+  --theme-accent-end: hsla(150, 61%, 48%, 1);
+  --theme-accent-primary: #82f4b1;
+  --theme-accent-secondary: #30c67c;
+  --theme-accent-tertiary: #46edf3;
+  --theme-badge-export: #82f4b1;
+  --theme-badge-import: #46edf3;
+  --theme-badge-backup: #ffaa5b;
+  --theme-badge-restore: #e082f4;
+  --theme-gradient: linear-gradient(90deg, hsla(145, 84%, 73%, 1) 0%, hsla(150, 61%, 48%, 1) 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, hsla(145, 84%, 73%, 1) 0%, hsla(150, 61%, 48%, 1) 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(145, 84%, 73%, 1) 0%, hsla(150, 61%, 48%, 1) 100%);
+}
+
+.theme-sage-plum {
+  --theme-bg: #120e13;
+  --theme-surface: #1a151c;
+  --theme-card: #241e27;
+  --theme-card-hover: #2e2632;
+  --theme-border: #3a313e;
+  --theme-text: #f3ebf4;
+  --theme-muted: #e2d8e5;
+  --theme-accent: hsla(155, 23%, 71%, 1);
+  --theme-accent-end: hsla(302, 17%, 32%, 1);
+  --theme-accent-primary: #a2c9b4;
+  --theme-accent-secondary: #bd73b8;
+  --theme-accent-tertiary: #f0a8d0;
+  --theme-badge-export: #a2c9b4;
+  --theme-badge-import: #73c2bd;
+  --theme-badge-backup: #f0a8d0;
+  --theme-badge-restore: #bd73b8;
+  --theme-gradient: linear-gradient(90deg, hsla(155, 23%, 71%, 1) 0%, hsla(302, 17%, 32%, 1) 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, hsla(155, 23%, 71%, 1) 0%, hsla(302, 17%, 32%, 1) 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(155, 23%, 71%, 1) 0%, hsla(302, 17%, 32%, 1) 100%);
+}
+
+.theme-sunset-mint {
+  --theme-bg: #091118;
+  --theme-surface: #101a24;
+  --theme-card: #172533;
+  --theme-card-hover: #1f3143;
+  --theme-border: #26394c;
+  --theme-text: #ffffff;
+  --theme-muted: #cbd5e1;
+  --theme-accent: hsla(154, 53%, 82%, 1);
+  --theme-accent-end: hsla(24, 88%, 65%, 1);
+  --theme-accent-primary: #b8f3e5;
+  --theme-accent-secondary: #f88b48;
+  --theme-accent-tertiary: #4a90e2;
+  --theme-badge-export: #b8f3e5;
+  --theme-badge-import: #4a90e2;
+  --theme-badge-backup: #f88b48;
+  --theme-badge-restore: #ffc857;
+  --theme-gradient: linear-gradient(90deg, hsla(154, 53%, 82%, 1) 0%, hsla(24, 88%, 65%, 1) 50%, hsla(216, 56%, 16%, 1) 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, hsla(154, 53%, 82%, 1) 0%, hsla(24, 88%, 65%, 1) 50%, hsla(216, 56%, 16%, 1) 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(154, 53%, 82%, 1) 0%, hsla(24, 88%, 65%, 1) 50%, hsla(216, 56%, 16%, 1) 100%);
+}
+
+.theme-olive-moss {
+  --theme-bg: #141707;
+  --theme-surface: #1d220c;
+  --theme-card: #272d11;
+  --theme-card-hover: #323a17;
+  --theme-border: #424c1f;
+  --theme-text: #ffffff;
+  --theme-muted: #e2e8c0;
+  --theme-accent: hsla(64, 73%, 16%, 1);
+  --theme-accent-end: hsla(65, 59%, 31%, 1);
+  --theme-accent-primary: #d4e157;
+  --theme-accent-secondary: #66bb6a;
+  --theme-accent-tertiary: #ffa726;
+  --theme-badge-export: #d4e157;
+  --theme-badge-import: #26c6da;
+  --theme-badge-backup: #ffa726;
+  --theme-badge-restore: #ab47bc;
+  --theme-gradient: linear-gradient(90deg, hsla(64, 73%, 16%, 1) 0%, hsla(65, 59%, 31%, 1) 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, hsla(64, 73%, 16%, 1) 0%, hsla(65, 59%, 31%, 1) 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(64, 73%, 16%, 1) 0%, hsla(65, 59%, 31%, 1) 100%);
+}
+
+input::placeholder, textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1 !important;
+}
+
 @layer base {
   body {
-    @apply bg-forest-950 text-emerald-50;
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 }
 
-/* Custom Emerald Dark Scrollbar */
+/* User Gradient Utilities */
+.bg-user-gradient {
+  background: var(--theme-gradient);
+  background: var(--theme-gradient-webkit);
+  background: var(--theme-gradient-moz);
+}
+
+.text-user-gradient {
+  background: var(--theme-gradient);
+  background: var(--theme-gradient-webkit);
+  background: var(--theme-gradient-moz);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.border-user-gradient {
+  border-image: var(--theme-gradient) 1;
+}
+
+/* Custom High Contrast Scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #040d07;
+  background: var(--theme-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #143d26;
+  background: var(--theme-border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #1b5233;
+  background: var(--theme-accent-primary);
 }
 
 .terminal-scroll {
-  scrollbar-color: #143d26 #040d07;
+  scrollbar-color: var(--theme-border) var(--theme-bg);
   scrollbar-width: thin;
+}
+
+.font-annie, .font-ballet {
+  font-family: 'Annie Use Your Telescope', cursive, sans-serif !important;
+  letter-spacing: 0.04em;
 }
