@@ -127,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-user-gradient">MSSQL Database Migrator</span>
             </h1>
             <span className="px-2 py-0.5 text-[10px] font-mono font-semibold bg-theme-card text-theme-accentPrimary rounded-md border border-theme-border shadow-xs">
-              v1.0 GUI
+              v1.9 GUI
             </span>
             <span className="px-2 py-0.5 text-[10px] font-mono font-bold bg-theme-accentPrimary/20 text-theme-accentPrimary rounded-md border border-theme-accentPrimary/40 shadow-xs">
               by mu42
