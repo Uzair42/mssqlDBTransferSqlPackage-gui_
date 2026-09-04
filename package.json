@@ -1,6 +1,6 @@
 {
   "name": "sqlpackage-gui",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Cross-Platform MSSQL BACPAC Export Desktop App",
   "main": "dist-electron/main.js",
   "repository": {
