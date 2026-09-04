@@ -4,9 +4,9 @@ import net from 'net';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { Connection as TediousConnection, Request as TediousRequest } from 'tedious';
 import { getExecutablePath } from './downloader';
 import { fetchServerVersionDetails, ServerVersionInfo } from './systemInfo';
+import { executeSqlQuery, DbConnectionConfig } from './dbDriver';
 
 export interface ExportConfig {
   action: 'Export' | 'Import' | 'Backup' | 'Restore_Bak';
@@ -52,109 +52,51 @@ function redactLog(content: string, password?: string): string {
 }
 
 /**
- * Connects to master database using tedious and retrieves all online database names.
+ * Connects to master database and retrieves all online database names.
  */
 export async function fetchDatabases(
   config: ExportConfig
 ): Promise<{ success: boolean; databases?: string[]; serverInfo?: ServerVersionInfo; message?: string }> {
-  const host = config.server.trim() || 'localhost';
-  const port = parseInt(config.port.trim() || '1433', 10);
+  const query = "SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name;";
 
-  const authOptions: any = config.authType === 'windows'
-    ? {
-        type: 'ntlm',
-        options: {
-          domain: config.domain || '',
-          userName: config.username || '',
-          password: config.password || '',
-        },
-      }
-    : {
-        type: 'default',
-        options: {
-          userName: config.username || 'sa',
-          password: config.password || '',
-        },
-      };
-
-  const tediousConfig: any = {
-    server: host,
-    options: {
-      port: port,
-      database: 'master',
-      trustServerCertificate: config.trustServerCertificate,
-      connectTimeout: 5000,
-      requestTimeout: 5000,
-      encrypt: false,
-    },
-    authentication: authOptions,
+  const dbConfig: DbConnectionConfig = {
+    ...config,
+    database: 'master',
+    connectTimeout: 5000,
+    requestTimeout: 5000,
   };
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const res = await executeSqlQuery(dbConfig, query);
 
-      connection.on('connect', async (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          resolve({
-            success: false,
-            message: `Failed to connect to server: ${err.message}`,
-          });
-          return;
-        }
+  if (!res.success) {
+    return {
+      success: false,
+      message: `Failed to connect to server: ${res.message}`,
+    };
+  }
 
-        const databases: string[] = [];
-        const query = "SELECT name FROM sys.databases WHERE state_desc = 'ONLINE' ORDER BY name;";
-
-        const request = new TediousRequest(query, async (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            resolve({
-              success: false,
-              message: `Database query error: ${queryErr.message}`,
-            });
-          } else {
-            // Also fetch server version telemetry
-            let serverInfo: ServerVersionInfo | undefined;
-            try {
-              const verRes = await fetchServerVersionDetails(config);
-              if (verRes.success) serverInfo = verRes.serverInfo;
-            } catch (_) {}
-
-            resolve({
-              success: true,
-              databases,
-              serverInfo,
-            });
-          }
-        });
-
-        request.on('row', (columns: any[]) => {
-          const dbName = columns[0]?.value;
-          if (dbName && typeof dbName === 'string') {
-            databases.push(dbName);
-          }
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('error', (err: any) => {
-        resolve({
-          success: false,
-          message: err.message || 'Database connection error',
-        });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      resolve({
-        success: false,
-        message: err.message || 'Error initializing connection to database',
-      });
+  const databases: string[] = [];
+  if (res.rows) {
+    for (const r of res.rows) {
+      const name = r.name || r['name'] || Object.values(r)[0];
+      if (name && typeof name === 'string') {
+        databases.push(name);
+      }
     }
-  });
+  }
+
+  // Also fetch server version telemetry
+  let serverInfo: ServerVersionInfo | undefined;
+  try {
+    const verRes = await fetchServerVersionDetails(config);
+    if (verRes.success) serverInfo = verRes.serverInfo;
+  } catch (_) {}
+
+  return {
+    success: true,
+    databases,
+    serverInfo,
+  };
 }
 
 export interface TableColumnDetails {
@@ -191,209 +133,144 @@ export async function fetchDatabaseSchema(
   config: ExportConfig,
   databaseName?: string
 ): Promise<{ success: boolean; tables?: TableSchemaInfo[]; relationships?: TableRelationshipInfo[]; message?: string }> {
-  const host = config.server.trim() || 'localhost';
-  const port = parseInt(config.port.trim() || '1433', 10);
   const targetDb = databaseName || config.database || 'master';
 
-  const authOptions: any = config.authType === 'windows'
-    ? {
-        type: 'ntlm',
-        options: {
-          domain: config.domain || '',
-          userName: config.username || '',
-          password: config.password || '',
-        },
-      }
-    : {
-        type: 'default',
-        options: {
-          userName: config.username || 'sa',
-          password: config.password || '',
-        },
-      };
-
-  const tediousConfig: any = {
-    server: host,
-    options: {
-      port: port,
-      database: targetDb,
-      trustServerCertificate: config.trustServerCertificate,
-      connectTimeout: 5000,
-      requestTimeout: 15000,
-      encrypt: false,
-    },
-    authentication: authOptions,
+  const dbConfig: DbConnectionConfig = {
+    ...config,
+    database: targetDb,
+    connectTimeout: 5000,
+    requestTimeout: 15000,
   };
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const schemaQuery = `
+    SELECT 
+      t.TABLE_SCHEMA, 
+      t.TABLE_NAME, 
+      c.COLUMN_NAME, 
+      c.DATA_TYPE, 
+      c.CHARACTER_MAXIMUM_LENGTH, 
+      c.IS_NULLABLE,
+      c.ORDINAL_POSITION,
+      CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK,
+      CASE WHEN fk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_FK,
+      ISNULL(p.rows, 0) AS ROW_COUNT
+    FROM INFORMATION_SCHEMA.TABLES t
+    JOIN INFORMATION_SCHEMA.COLUMNS c 
+      ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
+    LEFT JOIN sys.tables st ON st.name = t.TABLE_NAME AND SCHEMA_NAME(st.schema_id) = t.TABLE_SCHEMA
+    LEFT JOIN sys.partitions p ON st.object_id = p.object_id AND p.index_id IN (0, 1)
+    LEFT JOIN (
+      SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
+      FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+      WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+    ) pk ON c.TABLE_SCHEMA = pk.TABLE_SCHEMA AND c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
+    LEFT JOIN (
+      SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
+      FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+      WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY'
+    ) fk ON c.TABLE_SCHEMA = fk.TABLE_SCHEMA AND c.TABLE_NAME = fk.TABLE_NAME AND c.COLUMN_NAME = fk.COLUMN_NAME
+    WHERE t.TABLE_TYPE = 'BASE TABLE'
+    ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION;
+  `;
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          resolve({
-            success: false,
-            message: `Failed to connect to database '${targetDb}': ${err.message}`,
-          });
-          return;
-        }
+  const schemaRes = await executeSqlQuery(dbConfig, schemaQuery);
+  if (!schemaRes.success) {
+    return {
+      success: false,
+      message: `Schema query error: ${schemaRes.message}`,
+    };
+  }
 
-        const schemaMap = new Map<string, TableSchemaInfo>();
-        const relationships: TableRelationshipInfo[] = [];
+  const schemaMap = new Map<string, TableSchemaInfo>();
+  for (const row of (schemaRes.rows || [])) {
+    const schemaName = row['TABLE_SCHEMA'] || 'dbo';
+    const tableName = row['TABLE_NAME'];
+    const columnName = row['COLUMN_NAME'];
+    const dataType = row['DATA_TYPE'] || 'varchar';
+    const maxLength = row['CHARACTER_MAXIMUM_LENGTH'] !== undefined && row['CHARACTER_MAXIMUM_LENGTH'] !== null
+      ? Number(row['CHARACTER_MAXIMUM_LENGTH'])
+      : null;
+    const isNullable = row['IS_NULLABLE'] === 'YES' || row['IS_NULLABLE'] === true;
+    const ordinalPosition = Number(row['ORDINAL_POSITION'] || 0);
+    const isPrimaryKey = Number(row['IS_PK']) === 1 || row['IS_PK'] === true;
+    const isForeignKey = Number(row['IS_FK']) === 1 || row['IS_FK'] === true;
+    const rowCount = Number(row['ROW_COUNT'] || 0);
 
-        const schemaQuery = `
-          SELECT 
-            t.TABLE_SCHEMA, 
-            t.TABLE_NAME, 
-            c.COLUMN_NAME, 
-            c.DATA_TYPE, 
-            c.CHARACTER_MAXIMUM_LENGTH, 
-            c.IS_NULLABLE,
-            c.ORDINAL_POSITION,
-            CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK,
-            CASE WHEN fk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_FK,
-            ISNULL(p.rows, 0) AS ROW_COUNT
-          FROM INFORMATION_SCHEMA.TABLES t
-          JOIN INFORMATION_SCHEMA.COLUMNS c 
-            ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME
-          LEFT JOIN sys.tables st ON st.name = t.TABLE_NAME AND SCHEMA_NAME(st.schema_id) = t.TABLE_SCHEMA
-          LEFT JOIN sys.partitions p ON st.object_id = p.object_id AND p.index_id IN (0, 1)
-          LEFT JOIN (
-            SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
-            WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-          ) pk ON c.TABLE_SCHEMA = pk.TABLE_SCHEMA AND c.TABLE_NAME = pk.TABLE_NAME AND c.COLUMN_NAME = pk.COLUMN_NAME
-          LEFT JOIN (
-            SELECT k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-            JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON tc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
-            WHERE tc.CONSTRAINT_TYPE = 'FOREIGN KEY'
-          ) fk ON c.TABLE_SCHEMA = fk.TABLE_SCHEMA AND c.TABLE_NAME = fk.TABLE_NAME AND c.COLUMN_NAME = fk.COLUMN_NAME
-          WHERE t.TABLE_TYPE = 'BASE TABLE'
-          ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME, c.ORDINAL_POSITION;
-        `;
+    if (!tableName || !columnName) continue;
 
-        const fkQuery = `
-          SELECT 
-            fk.name AS constraint_name,
-            OBJECT_SCHEMA_NAME(fk.parent_object_id) AS fk_schema,
-            OBJECT_NAME(fk.parent_object_id) AS fk_table,
-            col1.name AS fk_column,
-            OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS pk_schema,
-            OBJECT_NAME(fk.referenced_object_id) AS pk_table,
-            col2.name AS pk_column
-          FROM sys.foreign_keys fk
-          JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-          JOIN sys.columns col1 ON fkc.parent_object_id = col1.object_id AND fkc.parent_column_id = col1.column_id
-          JOIN sys.columns col2 ON fkc.referenced_object_id = col2.object_id AND fkc.referenced_column_id = col2.column_id;
-        `;
-
-        const requestSchema = new TediousRequest(schemaQuery, (queryErr: any) => {
-          if (queryErr) {
-            try { connection.close(); } catch (_) {}
-            resolve({
-              success: false,
-              message: `Schema query error: ${queryErr.message}`,
-            });
-            return;
-          }
-
-          // Next query foreign keys
-          const requestFK = new TediousRequest(fkQuery, (fkErr: any) => {
-            try { connection.close(); } catch (_) {}
-            const tables = Array.from(schemaMap.values());
-            if (fkErr) {
-              // Return tables even if FK query fails gracefully
-              resolve({ success: true, tables, relationships: [] });
-            } else {
-              resolve({ success: true, tables, relationships });
-            }
-          });
-
-          requestFK.on('row', (cols: any[]) => {
-            const constraintName = cols[0]?.value || 'FK';
-            const fkSchema = cols[1]?.value || 'dbo';
-            const fkTable = cols[2]?.value || '';
-            const fkColumn = cols[3]?.value || '';
-            const pkSchema = cols[4]?.value || 'dbo';
-            const pkTable = cols[5]?.value || '';
-            const pkColumn = cols[6]?.value || '';
-
-            if (fkTable && pkTable) {
-              relationships.push({
-                constraintName,
-                fkSchema,
-                fkTable,
-                fkColumn,
-                fkFullName: `${fkSchema}.${fkTable}`,
-                pkSchema,
-                pkTable,
-                pkColumn,
-                pkFullName: `${pkSchema}.${pkTable}`,
-              });
-            }
-          });
-
-          connection.execSql(requestFK);
-        });
-
-        requestSchema.on('row', (columns: any[]) => {
-          const schemaName = columns[0]?.value || 'dbo';
-          const tableName = columns[1]?.value;
-          const columnName = columns[2]?.value;
-          const dataType = columns[3]?.value || 'varchar';
-          const maxLength = columns[4]?.value;
-          const isNullable = columns[5]?.value === 'YES';
-          const ordinalPosition = columns[6]?.value || 0;
-          const isPrimaryKey = columns[7]?.value === 1;
-          const isForeignKey = columns[8]?.value === 1;
-          const rowCount = Number(columns[9]?.value || 0);
-
-          if (!tableName || !columnName) return;
-
-          const key = `${schemaName}.${tableName}`;
-          if (!schemaMap.has(key)) {
-            schemaMap.set(key, {
-              schemaName,
-              tableName,
-              fullName: key,
-              rowCount,
-              columns: [],
-            });
-          }
-
-          const table = schemaMap.get(key)!;
-          table.columns.push({
-            columnName,
-            dataType,
-            maxLength: maxLength !== undefined ? maxLength : null,
-            isNullable,
-            ordinalPosition,
-            isPrimaryKey,
-            isForeignKey,
-          });
-        });
-
-        connection.execSql(requestSchema);
-      });
-
-      connection.on('error', (err: any) => {
-        resolve({
-          success: false,
-          message: err.message || 'Database connection error during schema fetch',
-        });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      resolve({
-        success: false,
-        message: err.message || 'Error initializing connection for schema',
+    const key = `${schemaName}.${tableName}`;
+    if (!schemaMap.has(key)) {
+      schemaMap.set(key, {
+        schemaName,
+        tableName,
+        fullName: key,
+        rowCount,
+        columns: [],
       });
     }
-  });
+
+    const table = schemaMap.get(key)!;
+    table.columns.push({
+      columnName,
+      dataType,
+      maxLength,
+      isNullable,
+      ordinalPosition,
+      isPrimaryKey,
+      isForeignKey,
+    });
+  }
+
+  const fkQuery = `
+    SELECT 
+      fk.name AS constraint_name,
+      OBJECT_SCHEMA_NAME(fk.parent_object_id) AS fk_schema,
+      OBJECT_NAME(fk.parent_object_id) AS fk_table,
+      col1.name AS fk_column,
+      OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS pk_schema,
+      OBJECT_NAME(fk.referenced_object_id) AS pk_table,
+      col2.name AS pk_column
+    FROM sys.foreign_keys fk
+    JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+    JOIN sys.columns col1 ON fkc.parent_object_id = col1.object_id AND fkc.parent_column_id = col1.column_id
+    JOIN sys.columns col2 ON fkc.referenced_object_id = col2.object_id AND fkc.referenced_column_id = col2.column_id;
+  `;
+
+  const relationships: TableRelationshipInfo[] = [];
+  const fkRes = await executeSqlQuery(dbConfig, fkQuery);
+  if (fkRes.success && fkRes.rows) {
+    for (const row of fkRes.rows) {
+      const constraintName = row['constraint_name'] || 'FK';
+      const fkSchema = row['fk_schema'] || 'dbo';
+      const fkTable = row['fk_table'] || '';
+      const fkColumn = row['fk_column'] || '';
+      const pkSchema = row['pk_schema'] || 'dbo';
+      const pkTable = row['pk_table'] || '';
+      const pkColumn = row['pk_column'] || '';
+
+      if (fkTable && pkTable) {
+        relationships.push({
+          constraintName,
+          fkSchema,
+          fkTable,
+          fkColumn,
+          fkFullName: `${fkSchema}.${fkTable}`,
+          pkSchema,
+          pkTable,
+          pkColumn,
+          pkFullName: `${pkSchema}.${pkTable}`,
+        });
+      }
+    }
+  }
+
+  return {
+    success: true,
+    tables: Array.from(schemaMap.values()),
+    relationships,
+  };
 }
 
 export async function fetchTableData(
@@ -403,112 +280,48 @@ export async function fetchTableData(
   databaseName?: string,
   limit = 50
 ): Promise<{ success: boolean; columns?: string[]; rows?: any[]; message?: string }> {
-  const host = config.server.trim() || 'localhost';
-  const port = parseInt(config.port.trim() || '1433', 10);
   const targetDb = databaseName || config.database || 'master';
 
-  const authOptions: any = config.authType === 'windows'
-    ? {
-        type: 'ntlm',
-        options: {
-          domain: config.domain || '',
-          userName: config.username || '',
-          password: config.password || '',
-        },
-      }
-    : {
-        type: 'default',
-        options: {
-          userName: config.username || 'sa',
-          password: config.password || '',
-        },
-      };
-
-  const tediousConfig: any = {
-    server: host,
-    options: {
-      port: port,
-      database: targetDb,
-      trustServerCertificate: config.trustServerCertificate,
-      connectTimeout: 5000,
-      requestTimeout: 15000,
-      encrypt: false,
-    },
-    authentication: authOptions,
+  const dbConfig: DbConnectionConfig = {
+    ...config,
+    database: targetDb,
+    connectTimeout: 5000,
+    requestTimeout: 15000,
   };
 
   const safeSchema = schemaName.replace(/\]/g, ']]');
   const safeTable = tableName.replace(/\]/g, ']]');
+  const query = `SELECT TOP ${Math.min(limit, 200)} * FROM [${safeSchema}].[${safeTable}];`;
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const res = await executeSqlQuery(dbConfig, query);
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          resolve({
-            success: false,
-            message: `Failed to connect to '${targetDb}': ${err.message}`,
-          });
-          return;
-        }
+  if (!res.success) {
+    return {
+      success: false,
+      message: `Data query error: ${res.message}`,
+    };
+  }
 
-        const columns: string[] = [];
-        const rows: any[] = [];
-        const query = `SELECT TOP ${Math.min(limit, 200)} * FROM [${safeSchema}].[${safeTable}];`;
+  const rawRows = res.rows || [];
+  const columns: string[] = [];
 
-        const request = new TediousRequest(query, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            resolve({
-              success: false,
-              message: `Data query error: ${queryErr.message}`,
-            });
-          } else {
-            resolve({
-              success: true,
-              columns,
-              rows,
-            });
-          }
-        });
+  if (rawRows.length > 0) {
+    Object.keys(rawRows[0]).forEach((k) => columns.push(k));
+  }
 
-        request.on('row', (rowCols: any[]) => {
-          if (columns.length === 0) {
-            rowCols.forEach((col) => {
-              if (col.metadata && col.metadata.colName) {
-                columns.push(col.metadata.colName);
-              }
-            });
-          }
-
-          const rowObj: any = {};
-          rowCols.forEach((col, idx) => {
-            const colName = col.metadata?.colName || `col_${idx}`;
-            rowObj[colName] = col.value !== null && col.value !== undefined ? String(col.value) : null;
-          });
-          rows.push(rowObj);
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('error', (err: any) => {
-        resolve({
-          success: false,
-          message: err.message || 'Database connection error during table data fetch',
-        });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      resolve({
-        success: false,
-        message: err.message || 'Error initializing connection for table data',
-      });
+  const rows = rawRows.map((r: any) => {
+    const obj: Record<string, any> = {};
+    for (const [k, v] of Object.entries(r)) {
+      obj[k] = v !== null && v !== undefined ? String(v) : null;
     }
+    return obj;
   });
+
+  return {
+    success: true,
+    columns,
+    rows,
+  };
 }
 
 /**
@@ -611,43 +424,47 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
 }
 
 /**
- * Test Connection logic: Performs TCP network probe followed by sqlpackage authentication validation.
+ * Test Connection logic: Performs network/socket probe followed by MSSQL authentication validation.
  */
 export async function testConnection(
   config: ExportConfig
 ): Promise<{ success: boolean; message: string; details?: string; serverInfo?: ServerVersionInfo }> {
   const host = config.server.trim();
-  const port = parseInt(config.port.trim() || '1433', 10);
+  const port = parseInt(config.port.trim() || '1433', 10) || 1433;
 
-  // Step 1: TCP Port Connectivity Check
-  const tcpCheck = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(4000);
+  // Step 1: TCP Port Connectivity Check (skip for Windows named pipes or named instances if host has \)
+  const isNamedInstanceOrPipe = host.includes('\\') || host.startsWith('.');
+  
+  if (!isNamedInstanceOrPipe) {
+    const tcpCheck = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(4000);
 
-    socket.on('connect', () => {
-      socket.destroy();
-      resolve({ success: true });
+      socket.on('connect', () => {
+        socket.destroy();
+        resolve({ success: true });
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        resolve({ success: false, error: `Connection timed out after 4 seconds to ${host}:${port}.` });
+      });
+
+      socket.on('error', (err) => {
+        socket.destroy();
+        resolve({ success: false, error: err.message });
+      });
+
+      socket.connect(port, host);
     });
 
-    socket.on('timeout', () => {
-      socket.destroy();
-      resolve({ success: false, error: `Connection timed out after 4 seconds to ${host}:${port}.` });
-    });
-
-    socket.on('error', (err) => {
-      socket.destroy();
-      resolve({ success: false, error: err.message });
-    });
-
-    socket.connect(port, host);
-  });
-
-  if (!tcpCheck.success) {
-    return {
-      success: false,
-      message: `Network Host Unreachable (${host}:${port})`,
-      details: `Could not establish TCP socket connection to ${host} on port ${port}. Ensure MSSQL Server is running, TCP/IP is enabled, and port ${port} is open in firewall.\nReason: ${tcpCheck.error}`,
-    };
+    if (!tcpCheck.success && process.platform !== 'win32') {
+      return {
+        success: false,
+        message: `Network Host Unreachable (${host}:${port})`,
+        details: `Could not establish TCP socket connection to ${host} on port ${port}. Ensure MSSQL Server is running, TCP/IP is enabled, and port ${port} is open in firewall.\nReason: ${tcpCheck.error}`,
+      };
+    }
   }
 
   // Step 2: Query SQL Server version & driver telemetry
@@ -774,7 +591,7 @@ export async function testConnection(
           serverInfo,
         });
       } else {
-        // Even if sqlpackage threw non-zero, tedious authentication succeeded, so provide meaningful info
+        // Even if sqlpackage threw non-zero, database authentication succeeded, so provide meaningful info
         resolve({
           success: true,
           message: `Connected to ${serverInfo?.friendlyVersion || host}!`,
@@ -820,58 +637,17 @@ export async function exportDatabase(
 
   // If Importing, prepare target DB by dropping existing DB if present (prevents SQL71659 error)
   if (config.action === 'Import' && config.database) {
-    const host = config.server.trim() || 'localhost';
-    const port = parseInt(config.port.trim() || '1433', 10);
     const dbName = config.database.replace(/'/g, "''");
-
-    const tediousConfig: any = {
-      server: host,
-      options: {
-        port,
-        database: 'master',
-        trustServerCertificate: config.trustServerCertificate,
-        connectTimeout: 5000,
-        requestTimeout: 10000,
-        encrypt: false,
-      },
-      authentication: {
-        type: 'default',
-        options: {
-          userName: config.username || 'sa',
-          password: config.password || '',
-        },
-      },
-    };
-
-    await new Promise<void>((resolve) => {
-      try {
-        const connection = new TediousConnection(tediousConfig);
-        connection.on('connect', (err: any) => {
-          if (err) {
-            resolve();
-            return;
-          }
-          const sql = `
-            IF EXISTS (SELECT name FROM sys.databases WHERE name = N'${dbName}')
-            BEGIN
-                ALTER DATABASE [${dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-                DROP DATABASE [${dbName}];
-            END
-          `;
-          logEvent('info', `Preparing target database [${config.database}] on server...\n`);
-          const request = new TediousRequest(sql, () => {
-            try { connection.close(); } catch (_) {}
-            logEvent('info', `✓ Target database [${config.database}] ready for fresh import.\n`);
-            resolve();
-          });
-          connection.execSql(request);
-        });
-        connection.on('error', () => resolve());
-        connection.connect();
-      } catch (_) {
-        resolve();
-      }
-    });
+    const sql = `
+      IF EXISTS (SELECT name FROM sys.databases WHERE name = N'${dbName}')
+      BEGIN
+          ALTER DATABASE [${dbName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+          DROP DATABASE [${dbName}];
+      END
+    `;
+    logEvent('info', `Preparing target database [${config.database}] on server...\n`);
+    await executeSqlQuery({ ...config, database: 'master' }, sql);
+    logEvent('info', `✓ Target database [${config.database}] ready for fresh import.\n`);
   }
 
   return new Promise((resolve) => {

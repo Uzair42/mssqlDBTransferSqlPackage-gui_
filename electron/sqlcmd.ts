@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { Connection as TediousConnection, Request as TediousRequest } from 'tedious';
+import { executeSqlQuery, executeSqlStreaming, DbConnectionConfig } from './dbDriver';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,44 +58,6 @@ function redactLog(content: string, password?: string): string {
 }
 
 /**
- * Creates a tedious connection config object.
- */
-function buildTediousConfig(cfg: SqlcmdConnectionConfig): any {
-  const host = cfg.server.trim() || 'localhost';
-  const port = parseInt(cfg.port.trim() || '1433', 10);
-
-  const authOptions: any = cfg.authType === 'windows'
-    ? {
-        type: 'ntlm',
-        options: {
-          domain: cfg.domain || '',
-          userName: cfg.username || '',
-          password: cfg.password || '',
-        },
-      }
-    : {
-        type: 'default',
-        options: {
-          userName: cfg.username || 'sa',
-          password: cfg.password || '',
-        },
-      };
-
-  return {
-    server: host,
-    options: {
-      port,
-      database: 'master',
-      trustServerCertificate: cfg.trustServerCertificate,
-      connectTimeout: 10000,
-      requestTimeout: 0,   // Infinite — backup/restore can take a long time
-      encrypt: false,
-    },
-    authentication: authOptions,
-  };
-}
-
-/**
  * Returns the default MSSQL data directory for the current OS.
  */
 export function getDefaultDataDir(): string {
@@ -122,7 +84,7 @@ export function getDefaultBackupDir(): string {
  */
 export function ensureBakAccessible(bakFilePath: string): { accessiblePath: string; copied: boolean; error?: string } {
   if (process.platform === 'win32') {
-    // On Windows, MSSQL can generally read from any location
+    // On Windows, MSSQL can generally read directly from any drive / UNC path
     return { accessiblePath: bakFilePath, copied: false };
   }
 
@@ -186,61 +148,35 @@ export async function getFileListOnly(
   // Ensure the .bak is accessible to MSSQL
   const { accessiblePath, error: copyError } = ensureBakAccessible(bakFilePath);
 
-  const tediousConfig = buildTediousConfig(cfg);
+  const sql = `RESTORE FILELISTONLY FROM DISK = N'${accessiblePath.replace(/'/g, "''")}';`;
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const dbConfig: DbConnectionConfig = {
+    ...cfg,
+    database: 'master',
+  };
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          resolve({ success: false, message: `Connection failed: ${err.message}` });
-          return;
-        }
+  const res = await executeSqlQuery(dbConfig, sql);
 
-        const files: BakFileInfo[] = [];
-        const sql = `RESTORE FILELISTONLY FROM DISK = N'${accessiblePath.replace(/'/g, "''")}';`;
-
-        const request = new TediousRequest(sql, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            let msg = `FILELISTONLY error: ${queryErr.message}`;
-            if (copyError) msg += `\n${copyError}`;
-            if (queryErr.message.includes('Cannot open backup device') || queryErr.message.includes('Operating system error 5')) {
-              msg += '\n\nPermission denied. On Linux, run: sudo cp "' + bakFilePath + '" /var/opt/mssql/backup/ && sudo chown mssql:mssql /var/opt/mssql/backup/' + path.basename(bakFilePath);
-            }
-            resolve({ success: false, message: msg });
-          } else {
-            resolve({ success: true, files });
-          }
-        });
-
-        request.on('row', (columns: any[]) => {
-          const row: any = {};
-          columns.forEach((col: any) => {
-            row[col.metadata.colName] = col.value;
-          });
-          files.push({
-            logicalName: row['LogicalName'] || '',
-            physicalName: row['PhysicalName'] || '',
-            type: row['Type'] || '',
-            size: row['Size'] ? Number(row['Size']) : 0,
-          });
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('error', (err: any) => {
-        resolve({ success: false, message: err.message || 'Connection error' });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      resolve({ success: false, message: err.message });
+  if (!res.success) {
+    let msg = `FILELISTONLY error: ${res.message || 'Unknown error'}`;
+    if (copyError) msg += `\n${copyError}`;
+    if (
+      res.message &&
+      (res.message.includes('Cannot open backup device') || res.message.includes('Operating system error 5'))
+    ) {
+      msg += '\n\nPermission denied. On Linux, run: sudo cp "' + bakFilePath + '" /var/opt/mssql/backup/ && sudo chown mssql:mssql /var/opt/mssql/backup/' + path.basename(bakFilePath);
     }
-  });
+    return { success: false, message: msg };
+  }
+
+  const files: BakFileInfo[] = (res.rows || []).map((row: any) => ({
+    logicalName: row['LogicalName'] || '',
+    physicalName: row['PhysicalName'] || '',
+    type: row['Type'] || '',
+    size: row['Size'] ? Number(row['Size']) : 0,
+  }));
+
+  return { success: true, files };
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +188,6 @@ export async function backupDatabase(
   window: BrowserWindow
 ): Promise<{ success: boolean; message: string }> {
 
-  const tediousConfig = buildTediousConfig(cfg);
   const logEvent = (type: string, text: string) => {
     if (window && !window.isDestroyed()) {
       window.webContents.send('sqlpackage:log', {
@@ -268,60 +203,28 @@ export async function backupDatabase(
 
   logEvent('info', `Starting native BACKUP DATABASE...\nDatabase: ${cfg.database}\nDestination: ${cfg.backupPath}\n`);
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const sql = `BACKUP DATABASE [${dbName}] TO DISK = N'${backupPath}' WITH FORMAT, INIT, NAME = N'${dbName}-Full Database Backup', COMPRESSION, STATS = 5;`;
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          logEvent('error', `Connection failed: ${err.message}`);
-          resolve({ success: false, message: `Connection failed: ${err.message}` });
-          return;
-        }
+  logEvent('info', `Executing T-SQL:\n${sql}\n`);
 
-        const sql = `BACKUP DATABASE [${dbName}] TO DISK = N'${backupPath}' WITH FORMAT, INIT, NAME = N'${dbName}-Full Database Backup', COMPRESSION, STATS = 5;`;
+  const dbConfig: DbConnectionConfig = {
+    ...cfg,
+    database: 'master',
+  };
 
-        logEvent('info', `Executing T-SQL:\n${sql}\n`);
-
-        const request = new TediousRequest(sql, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            logEvent('error', `Backup failed: ${queryErr.message}`);
-            resolve({ success: false, message: `Backup failed: ${queryErr.message}` });
-          } else {
-            logEvent('info', `✓ Backup completed successfully!\nFile saved to: ${cfg.backupPath}`);
-            resolve({ success: true, message: `Backup completed: ${cfg.backupPath}` });
-          }
-        });
-
-        // Capture informational messages (progress %)
-        request.on('message' as any, (msg: any) => {
-          if (msg && msg.message) {
-            logEvent('stdout', msg.message);
-          }
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('infoMessage', (info: any) => {
-        if (info && info.message) {
-          logEvent('stdout', info.message);
-        }
-      });
-
-      connection.on('error', (err: any) => {
-        logEvent('error', err.message || 'Connection error');
-        resolve({ success: false, message: err.message });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      logEvent('error', `Exception: ${err.message}`);
-      resolve({ success: false, message: err.message });
-    }
+  const res = await executeSqlStreaming(dbConfig, sql, {
+    onMessage: (msg: string) => {
+      logEvent('stdout', msg);
+    },
   });
+
+  if (!res.success) {
+    logEvent('error', `Backup failed: ${res.message}`);
+    return { success: false, message: `Backup failed: ${res.message}` };
+  }
+
+  logEvent('info', `✓ Backup completed successfully!\nFile saved to: ${cfg.backupPath}`);
+  return { success: true, message: `Backup completed: ${cfg.backupPath}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +236,6 @@ export async function restoreDatabase(
   window: BrowserWindow
 ): Promise<{ success: boolean; message: string }> {
 
-  const tediousConfig = buildTediousConfig(cfg);
   const logEvent = (type: string, text: string) => {
     if (window && !window.isDestroyed()) {
       window.webContents.send('sqlpackage:log', {
@@ -366,56 +268,34 @@ export async function restoreDatabase(
   logEvent('info', `Starting native RESTORE DATABASE...\nTarget Database: ${cfg.targetDatabase}\nSource .bak: ${accessiblePath}\n`);
   logEvent('info', `Executing T-SQL:\n${sql}\n`);
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const dbConfig: DbConnectionConfig = {
+    ...cfg,
+    database: 'master',
+  };
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          logEvent('error', `Connection failed: ${err.message}`);
-          resolve({ success: false, message: `Connection failed: ${err.message}` });
-          return;
-        }
-
-        const request = new TediousRequest(sql, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            let errMsg = `Restore failed: ${queryErr.message}`;
-            if (queryErr.message.includes('Cannot open backup device') || queryErr.message.includes('Operating system error 5')) {
-              errMsg += '\n\nPermission denied. On Linux, ensure the .bak file is in /var/opt/mssql/backup/ and owned by mssql user:\nsudo chown mssql:mssql ' + accessiblePath;
-            }
-            if (queryErr.message.includes('exclusive access')) {
-              errMsg += '\n\nThe database is currently in use. Close all connections to it first.';
-            }
-            logEvent('error', errMsg);
-            resolve({ success: false, message: errMsg });
-          } else {
-            logEvent('info', `✓ Database [${cfg.targetDatabase}] restored successfully!`);
-            resolve({ success: true, message: `Database [${cfg.targetDatabase}] restored successfully from ${cfg.bakFilePath}` });
-          }
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('infoMessage', (info: any) => {
-        if (info && info.message) {
-          logEvent('stdout', info.message);
-        }
-      });
-
-      connection.on('error', (err: any) => {
-        logEvent('error', err.message || 'Connection error');
-        resolve({ success: false, message: err.message });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      logEvent('error', `Exception: ${err.message}`);
-      resolve({ success: false, message: err.message });
-    }
+  const res = await executeSqlStreaming(dbConfig, sql, {
+    onMessage: (msg: string) => {
+      logEvent('stdout', msg);
+    },
   });
+
+  if (!res.success) {
+    let errMsg = `Restore failed: ${res.message}`;
+    if (
+      res.message &&
+      (res.message.includes('Cannot open backup device') || res.message.includes('Operating system error 5'))
+    ) {
+      errMsg += '\n\nPermission denied. On Linux, ensure the .bak file is in /var/opt/mssql/backup/ and owned by mssql user:\nsudo chown mssql:mssql ' + accessiblePath;
+    }
+    if (res.message && res.message.includes('exclusive access')) {
+      errMsg += '\n\nThe database is currently in use. Close all connections to it first.';
+    }
+    logEvent('error', errMsg);
+    return { success: false, message: errMsg };
+  }
+
+  logEvent('info', `✓ Database [${cfg.targetDatabase}] restored successfully!`);
+  return { success: true, message: `Database [${cfg.targetDatabase}] restored successfully from ${cfg.bakFilePath}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -426,54 +306,28 @@ export async function getServerDefaultPaths(
   cfg: SqlcmdConnectionConfig
 ): Promise<{ success: boolean; dataPath?: string; logPath?: string; message?: string }> {
 
-  const tediousConfig = buildTediousConfig(cfg);
+  const sql = `SELECT SERVERPROPERTY('InstanceDefaultDataPath') AS DataPath, SERVERPROPERTY('InstanceDefaultLogPath') AS LogPath;`;
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const dbConfig: DbConnectionConfig = {
+    ...cfg,
+    database: 'master',
+  };
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          // Fallback to OS defaults
-          const dataDir = getDefaultDataDir();
-          resolve({ success: true, dataPath: dataDir, logPath: dataDir });
-          return;
-        }
+  const res = await executeSqlQuery(dbConfig, sql);
 
-        let dataPath = '';
-        let logPath = '';
-        const sql = `SELECT SERVERPROPERTY('InstanceDefaultDataPath') AS DataPath, SERVERPROPERTY('InstanceDefaultLogPath') AS LogPath;`;
+  if (!res.success || !res.rows || res.rows.length === 0) {
+    const dataDir = getDefaultDataDir();
+    return { success: true, dataPath: dataDir, logPath: dataDir };
+  }
 
-        const request = new TediousRequest(sql, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-          if (queryErr || (!dataPath && !logPath)) {
-            const dataDir = getDefaultDataDir();
-            resolve({ success: true, dataPath: dataDir, logPath: dataDir });
-          } else {
-            resolve({ success: true, dataPath: dataPath || getDefaultDataDir(), logPath: logPath || dataPath || getDefaultDataDir() });
-          }
-        });
+  const row = res.rows[0];
+  const dataPath = row['DataPath'] || '';
+  const logPath = row['LogPath'] || '';
+  const defaultDir = getDefaultDataDir();
 
-        request.on('row', (columns: any[]) => {
-          columns.forEach((col: any) => {
-            if (col.metadata.colName === 'DataPath' && col.value) dataPath = col.value;
-            if (col.metadata.colName === 'LogPath' && col.value) logPath = col.value;
-          });
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('error', () => {
-        const dataDir = getDefaultDataDir();
-        resolve({ success: true, dataPath: dataDir, logPath: dataDir });
-      });
-
-      connection.connect();
-    } catch (_) {
-      const dataDir = getDefaultDataDir();
-      resolve({ success: true, dataPath: dataDir, logPath: dataDir });
-    }
-  });
+  return {
+    success: true,
+    dataPath: dataPath || defaultDir,
+    logPath: logPath || dataPath || defaultDir,
+  };
 }

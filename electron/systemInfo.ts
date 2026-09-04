@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
-import { Connection as TediousConnection, Request as TediousRequest } from 'tedious';
 import { getExecutablePath } from './downloader';
+import { executeSqlQuery, getActiveDriverName, DbConnectionConfig } from './dbDriver';
 
 export interface EnvironmentInfo {
   localMssqlInstalled: boolean;
@@ -148,7 +148,7 @@ export function getLocalMssqlEnvironment(): EnvironmentInfo {
     } else {
       const out = execSync('reg query "HKLM\\SOFTWARE\\ODBC\\ODBCINST.INI\\ODBC Drivers" 2>nul', { encoding: 'utf8' });
       out.split('\n').forEach((line) => {
-        const match = line.match(/^\s*(ODBC Driver \d+ for SQL Server|SQL Server Native Client \d+)/i);
+        const match = line.match(/^\s*(ODBC Driver \d+ for SQL Server|SQL Server Native Client \d+|SQL Server)/i);
         if (match) systemOdbcDrivers.push(match[1]);
       });
     }
@@ -169,7 +169,7 @@ export function getLocalMssqlEnvironment(): EnvironmentInfo {
     localMssqlVersion: localMssqlVersion || (localMssqlInstalled ? 'Installed' : undefined),
     localMssqlFriendly: localMssqlVersion ? getFriendlyMssqlVersion(localMssqlVersion) : undefined,
     localMssqlStatus,
-    activeClientDriver: 'Tedious v20.0.0 (TDS 7.4 Protocol)',
+    activeClientDriver: getActiveDriverName(),
     sqlpackageVersion: sqlpackageVersion ? `SqlPackage v${sqlpackageVersion} (DacFx / .NET SqlClient)` : undefined,
     systemOdbcDrivers,
     nodeVersion: process.version,
@@ -186,145 +186,79 @@ export async function fetchServerVersionDetails(config: any): Promise<{
   message?: string;
 }> {
   const host = (config.server || 'localhost').trim();
-  const port = parseInt((config.port || '1433').toString().trim(), 10);
+  const port = parseInt((config.port || '1433').toString().trim(), 10) || 1433;
 
-  const authOptions: any = config.authType === 'windows'
-    ? {
-        type: 'ntlm',
-        options: {
-          domain: config.domain || '',
-          userName: config.username || '',
-          password: config.password || '',
-        },
-      }
-    : {
-        type: 'default',
-        options: {
-          userName: config.username || 'sa',
-          password: config.password || '',
-        },
-      };
+  const sql = `
+    SELECT 
+      CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)) AS ProductVersion,
+      CAST(SERVERPROPERTY('ProductLevel') AS NVARCHAR(128)) AS ProductLevel,
+      CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128)) AS Edition,
+      CAST(SERVERPROPERTY('MachineName') AS NVARCHAR(128)) AS MachineName,
+      CAST(SERVERPROPERTY('InstanceName') AS NVARCHAR(128)) AS InstanceName,
+      CAST(SERVERPROPERTY('Collation') AS NVARCHAR(128)) AS Collation,
+      @@VERSION AS FullVersion,
+      @@SPID AS SPID;
+  `;
 
-  const tediousConfig: any = {
-    server: host,
-    options: {
-      port,
-      database: 'master',
-      trustServerCertificate: config.trustServerCertificate ?? true,
-      connectTimeout: 7000,
-      requestTimeout: 7000,
-      encrypt: false,
-    },
-    authentication: authOptions,
+  const dbConfig: DbConnectionConfig = {
+    ...config,
+    database: 'master',
+    connectTimeout: 7000,
+    requestTimeout: 7000,
   };
 
-  return new Promise((resolve) => {
-    try {
-      const connection = new TediousConnection(tediousConfig);
+  const res = await executeSqlQuery(dbConfig, sql);
 
-      connection.on('connect', (err: any) => {
-        if (err) {
-          try { connection.close(); } catch (_) {}
-          resolve({
-            success: false,
-            message: `Connection failed: ${err.message}`,
-          });
-          return;
-        }
+  if (!res.success || !res.rows || res.rows.length === 0) {
+    return {
+      success: false,
+      message: res.message || 'Failed to retrieve server telemetry',
+    };
+  }
 
-        const sql = `
-          SELECT 
-            CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)) AS ProductVersion,
-            CAST(SERVERPROPERTY('ProductLevel') AS NVARCHAR(128)) AS ProductLevel,
-            CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128)) AS Edition,
-            CAST(SERVERPROPERTY('MachineName') AS NVARCHAR(128)) AS MachineName,
-            CAST(SERVERPROPERTY('InstanceName') AS NVARCHAR(128)) AS InstanceName,
-            CAST(SERVERPROPERTY('Collation') AS NVARCHAR(128)) AS Collation,
-            @@VERSION AS FullVersion,
-            @@SPID AS SPID;
-        `;
+  const row = res.rows[0];
+  const productVersion = row['ProductVersion'] || '';
+  const edition = row['Edition'] || '';
+  const productLevel = row['ProductLevel'] || '';
+  const fullVersion = row['FullVersion'] || '';
+  const machineName = row['MachineName'] || '';
+  const instanceName = row['InstanceName'] || '';
+  const collation = row['Collation'] || '';
+  const spid = row['SPID'] ? Number(row['SPID']) : undefined;
 
-        const rowData: Record<string, any> = {};
-
-        const request = new TediousRequest(sql, (queryErr: any) => {
-          try { connection.close(); } catch (_) {}
-
-          if (queryErr) {
-            resolve({
-              success: false,
-              message: `Telemetry query error: ${queryErr.message}`,
-            });
-            return;
-          }
-
-          const productVersion = rowData['ProductVersion'] || '';
-          const edition = rowData['Edition'] || '';
-          const productLevel = rowData['ProductLevel'] || '';
-          const fullVersion = rowData['FullVersion'] || '';
-          const machineName = rowData['MachineName'] || '';
-          const instanceName = rowData['InstanceName'] || '';
-          const collation = rowData['Collation'] || '';
-          const spid = rowData['SPID'] ? Number(rowData['SPID']) : undefined;
-
-          // Get sqlpackage version
-          let engineVersion = 'v170.4.83 (Microsoft DacFx / .NET SqlClient)';
-          try {
-            const execPath = getExecutablePath();
-            if (fs.existsSync(execPath)) {
-              const out = execSync(`"${execPath}" /version`, { encoding: 'utf8', timeout: 3000 }).trim();
-              if (out) engineVersion = `SqlPackage v${out} (Microsoft DacFx / .NET SqlClient)`;
-            }
-          } catch (_) {}
-
-          const friendlyVersion = getFriendlyMssqlVersion(productVersion, edition);
-
-          resolve({
-            success: true,
-            serverInfo: {
-              connected: true,
-              server: host,
-              port: port.toString(),
-              productVersion,
-              productMajorVersion: productVersion.split('.')[0] || '',
-              friendlyVersion,
-              productLevel,
-              edition,
-              fullVersion,
-              machineName,
-              instanceName,
-              collation,
-              spid,
-              activeDriver: 'Tedious v20.0.0 (Pure JS TDS 7.4 Driver)',
-              engineDriver: engineVersion,
-              encryption: config.trustServerCertificate ? 'Enabled (TrustServerCertificate: True)' : 'Standard SSL',
-              authType: config.authType === 'windows' ? 'Windows Authentication' : `SQL Server Auth (${config.username || 'sa'})`,
-              connectedAt: new Date().toLocaleTimeString(),
-            },
-          });
-        });
-
-        request.on('row', (columns: any[]) => {
-          columns.forEach((col: any) => {
-            rowData[col.metadata.colName] = col.value;
-          });
-        });
-
-        connection.execSql(request);
-      });
-
-      connection.on('error', (err: any) => {
-        resolve({
-          success: false,
-          message: err.message || 'Connection error',
-        });
-      });
-
-      connection.connect();
-    } catch (err: any) {
-      resolve({
-        success: false,
-        message: err.message || 'Exception establishing connection',
-      });
+  // Get sqlpackage version
+  let engineVersion = 'v170.4.83 (Microsoft DacFx / .NET SqlClient)';
+  try {
+    const execPath = getExecutablePath();
+    if (fs.existsSync(execPath)) {
+      const out = execSync(`"${execPath}" /version`, { encoding: 'utf8', timeout: 3000 }).trim();
+      if (out) engineVersion = `SqlPackage v${out} (Microsoft DacFx / .NET SqlClient)`;
     }
-  });
+  } catch (_) {}
+
+  const friendlyVersion = getFriendlyMssqlVersion(productVersion, edition);
+
+  return {
+    success: true,
+    serverInfo: {
+      connected: true,
+      server: host,
+      port: port.toString(),
+      productVersion,
+      productMajorVersion: productVersion.split('.')[0] || '',
+      friendlyVersion,
+      productLevel,
+      edition,
+      fullVersion,
+      machineName,
+      instanceName,
+      collation,
+      spid,
+      activeDriver: getActiveDriverName(),
+      engineDriver: engineVersion,
+      encryption: config.trustServerCertificate ? 'Enabled (TrustServerCertificate: True)' : 'Standard SSL',
+      authType: config.authType === 'windows' || config.useCurrentWindowsUser ? 'Windows Authentication' : `SQL Server Auth (${config.username || 'sa'})`,
+      connectedAt: new Date().toLocaleTimeString(),
+    },
+  };
 }
