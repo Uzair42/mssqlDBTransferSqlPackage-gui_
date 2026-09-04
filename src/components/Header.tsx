@@ -150,10 +150,10 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Client Driver Badge */}
         <div
           className="flex items-center space-x-1.5 px-2.5 py-1 bg-theme-surface border border-emerald-500/30 rounded-lg text-xs font-mono text-emerald-300"
-          title={`Active Client Driver: ${envInfo?.activeClientDriver || 'Tedious TDS 7.4'} | Engine: ${envInfo?.sqlpackageVersion || 'SqlPackage v170.4'}`}
+          title={`Active Client Driver: ${envInfo?.activeClientDriver || 'Tedious TDS 7.4'}${envInfo?.sqlpackageVersion ? ` | Engine: ${envInfo.sqlpackageVersion}` : ''}`}
         >
           <DriverConnectorIcon className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Driver: <strong className="text-white">Tedious</strong></span>
+          <span>Driver: <strong className="text-white">{envInfo?.activeClientDriver?.includes('msnodesqlv8') ? 'msnodesqlv8 (Native)' : 'Tedious'}</strong></span>
         </div>
 
         {/* Connected DB Server Badge */}

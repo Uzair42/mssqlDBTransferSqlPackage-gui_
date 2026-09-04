@@ -103,7 +103,7 @@ export const DependencyModal: React.FC<DependencyModalProps> = ({
         <div className="p-3 bg-theme-bg border border-theme-border rounded-xl space-y-1.5 mb-6 text-xs font-mono text-theme-text">
           <div className="flex items-center space-x-2">
             <HardDriveIcon className="w-3.5 h-3.5 text-theme-text" />
-            <span>Target OS: {process.platform}</span>
+            <span>Target OS: {navigator.userAgent.includes('Win') ? 'Windows' : navigator.userAgent.includes('Linux') ? 'Linux' : 'Cross-Platform'}</span>
           </div>
           <p className="text-[11px] text-theme-muted leading-normal">
             Downloads and configures standalone sqlpackage CLI dependencies with proper permissions.

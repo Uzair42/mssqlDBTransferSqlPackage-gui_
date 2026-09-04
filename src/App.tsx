@@ -248,6 +248,16 @@ export function App() {
 
   const handleExport = async () => {
     if (!window.electronAPI) return;
+
+    if ((config.action === 'Export' || config.action === 'Import') && !engineStatus?.exists) {
+      setBannerStatus({
+        type: 'error',
+        message: 'sqlpackage CLI engine is not installed or configured on your system. Click "Acquire sqlpackage Engine" in the top bar to configure it.',
+      });
+      setIsDownloadingModalOpen(true);
+      return;
+    }
+
     setIsRunning(true);
     setLogs([]);
     setBannerStatus(null);
