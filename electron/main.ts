@@ -236,10 +236,10 @@ ipcMain.handle('dialog:open-file', async (_event, title?: string) => {
   if (!mainWindow) return null;
 
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: title || 'Select Database Backup Archive (.bacpac or .bak)',
+    title: title || 'Select Database Backup Archive (.bacpac, .bak, or .zip)',
     filters: [
-      { name: 'Database Backup Files (*.bacpac, *.bak)', extensions: ['bacpac', 'bak'] },
-      { name: 'Data-tier Application Package (*.bacpac)', extensions: ['bacpac'] },
+      { name: 'Database Backup Files (*.bacpac, *.bak, *.zip)', extensions: ['bacpac', 'bak', 'zip'] },
+      { name: 'Data-tier Application Package (*.bacpac, *.zip)', extensions: ['bacpac', 'zip'] },
       { name: 'SQL Server Backup (*.bak)', extensions: ['bak'] },
       { name: 'All Files (*)', extensions: ['*'] },
     ],

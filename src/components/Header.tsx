@@ -208,7 +208,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* ZONE 3: Right Tools & Theme Selector */}
       <div className="flex items-center space-x-2.5">
         {/* 5-Theme Gradient Picker */}
-        <div className="relative" ref={themeMenuRef}>
+        <div className="relative" ref={themeMenuRef} data-tour-theme-switcher="true">
           <button
             type="button"
             onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
@@ -252,23 +252,25 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-          {/* Schema Visualizer Button */}
-          {onOpenSchemaModal && (
-            <button
-              type="button"
-              onClick={onOpenSchemaModal}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-theme-card hover:bg-theme-cardHover text-theme-text font-bold rounded-xl text-xs transition border border-theme-border shadow-xs hover:border-theme-accentPrimary/50"
-              title="Explore database schema, table structures & live data"
-            >
-              <DatabaseScannerIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />
-              <span className="hidden sm:inline">Schema Visualizer</span>
-            </button>
-          )}
+        {/* Schema Visualizer Button */}
+        {onOpenSchemaModal && (
+          <button
+            type="button"
+            onClick={onOpenSchemaModal}
+            data-tour-schema-visualizer="true"
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-theme-card hover:bg-theme-cardHover text-theme-text font-bold rounded-xl text-xs transition border border-theme-border shadow-xs hover:border-theme-accentPrimary/50"
+            title="Explore database schema, table structures & live data"
+          >
+            <DatabaseScannerIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />
+            <span className="hidden sm:inline">Schema Visualizer</span>
+          </button>
+        )}
 
-          {/* Transfer Backup Button */}
+        {/* Transfer Backup Button */}
         <button
           type="button"
           onClick={onOpenTransferModal}
+          data-tour-transfer-backup="true"
           className="flex items-center space-x-1.5 px-3 py-1.5 bg-user-gradient text-white font-bold rounded-xl text-xs transition shadow-md hover:brightness-110 active:scale-95 border border-white/20 drop-shadow-sm"
           title="Transfer database backup files over Wi-Fi/Bluetooth network"
         >
@@ -323,6 +325,23 @@ export const Header: React.FC<HeaderProps> = ({
                   <div className="text-[10px] text-theme-muted font-annie text-base">Step-by-step spotlight</div>
                 </div>
               </button>
+
+              {onOpenSchemaModal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsHelpMenuOpen(false);
+                    onOpenSchemaModal();
+                  }}
+                  className="w-full flex items-center space-x-2.5 px-3 py-2 text-left rounded-lg text-theme-text hover:bg-theme-card transition"
+                >
+                  <DatabaseScannerIcon className="w-4 h-4 text-emerald-400" />
+                  <div>
+                    <div className="font-semibold">ERD & Schema Visualizer</div>
+                    <div className="text-[10px] text-theme-muted font-annie text-base">Drag & Drop ERD, PNG export & tables</div>
+                  </div>
+                </button>
+              )}
 
               <div className="my-1 border-t border-theme-border" />
 

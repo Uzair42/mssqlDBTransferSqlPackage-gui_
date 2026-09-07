@@ -20,7 +20,9 @@ import {
   DownloadDocIcon,
   PrinterIcon,
   CopyClipboardIcon,
+  CompassGuideIcon,
 } from './icons/FeatureIcons';
+import { SchemaWalkthroughTour } from './SchemaWalkthroughTour';
 
 interface SchemaViewerModalProps {
   isOpen: boolean;
@@ -43,6 +45,7 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSchemaTourActive, setIsSchemaTourActive] = useState(false);
 
   // Table Data State
   const [tableData, setTableData] = useState<{ columns: string[]; rows: any[] } | null>(null);
@@ -477,6 +480,15 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
           {/* Modal Top Actions */}
           <div className="flex items-center space-x-2">
             <button
+              onClick={() => setIsSchemaTourActive(true)}
+              className="px-3 py-1.5 bg-user-gradient text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 shadow-sm hover:brightness-110 active:scale-95 transition border border-white/20"
+              title="Interactive Schema & ERD Walkthrough Guide"
+            >
+              <CompassGuideIcon className="w-3.5 h-3.5" />
+              <span>ERD & Schema Guide</span>
+            </button>
+
+            <button
               onClick={() => setIsFullScreen(!isFullScreen)}
               className="p-1.5 text-theme-text bg-theme-bg hover:bg-theme-cardHover border border-theme-border rounded-xl transition"
               title={isFullScreen ? 'Exit Full Screen' : 'Full Screen Preview'}
@@ -506,7 +518,10 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
         {/* MODAL BODY */}
         <div className="flex-1 flex overflow-hidden">
           {/* LEFT SIDEBAR: Table Tree / Selector */}
-          <div className="w-72 border-r border-theme-border bg-theme-surface/50 flex flex-col shrink-0">
+          <div
+            data-schema-tour-table-list="true"
+            className="w-72 border-r border-theme-border bg-theme-surface/50 flex flex-col shrink-0"
+          >
             {/* Search Filter */}
             <div className="p-3 border-b border-theme-border">
               <div className="relative">
@@ -591,7 +606,10 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
               </div>
 
               {/* View Tabs Toggle */}
-              <div className="flex bg-theme-bg p-1 rounded-xl border border-theme-border space-x-1">
+              <div
+                data-schema-tour-view-tabs="true"
+                className="flex bg-theme-bg p-1 rounded-xl border border-theme-border space-x-1"
+              >
                 <button
                   onClick={() => setActiveTab('columns')}
                   className={`px-3 py-1 rounded-lg text-xs font-aladin tracking-wider transition flex items-center space-x-1.5 ${
@@ -714,7 +732,10 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
                 </div>
               ) : activeTab === 'data' && selectedTable ? (
                 /* TAB 2: LIVE DATA PREVIEW GRID */
-                <div className="h-full overflow-auto p-4 select-text flex flex-col space-y-3">
+                <div
+                  data-schema-tour-data-preview="true"
+                  className="h-full overflow-auto p-4 select-text flex flex-col space-y-3"
+                >
                   {isLoadingData ? (
                     <div className="h-full flex flex-col items-center justify-center p-12 text-theme-muted space-y-2">
                       <LoaderIcon className="w-8 h-8 animate-spin text-theme-accentPrimary" />
@@ -748,7 +769,7 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
                               {tableData.columns.map((col) => {
                                 const val = row[col];
                                 return (
-                                  <td key={col} className="py-1.5 px-3 border-r border-theme-border/60 whitespace-nowrap text-theme-text max-w-xs truncate">
+                                   <td key={col} className="py-1.5 px-3 border-r border-theme-border/60 whitespace-nowrap text-theme-text max-w-xs truncate">
                                     {val === null ? (
                                       <span className="text-theme-muted italic text-[10px]">null</span>
                                     ) : (
@@ -772,6 +793,7 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
                 /* TAB 3: INTERACTIVE ERD DIAGRAM VIEW */
                 <div
                   ref={erdCanvasRef}
+                  data-schema-tour-erd-canvas="true"
                   onMouseDown={handleCanvasMouseDown}
                   onMouseMove={handleMouseMove}
                   onMouseUp={handleMouseUp}
@@ -781,97 +803,102 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
                   {/* ERD CANVAS CONTROLS & EXPORT TOOLBAR */}
                   <div className="absolute top-4 left-4 z-20 bg-theme-card/90 backdrop-blur border border-theme-border p-1.5 rounded-xl shadow-xl flex items-center space-x-1.5 flex-wrap">
                     {/* Zoom & View Controls */}
-                    <button
-                      onClick={() => setZoomScale((prev) => Math.min(2.5, prev + 0.15))}
-                      className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Zoom In (+)"
-                    >
-                      <ZoomInIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setZoomScale((prev) => Math.max(0.3, prev - 0.15))}
-                      className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Zoom Out (-)"
-                    >
-                      <ZoomOutIcon className="w-4 h-4" />
-                    </button>
+                    <div data-schema-tour-zoom-controls="true" className="flex items-center space-x-1">
+                      <button
+                        onClick={() => setZoomScale((prev) => Math.min(2.5, prev + 0.15))}
+                        className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Zoom In (+)"
+                      >
+                        <ZoomInIcon className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setZoomScale((prev) => Math.max(0.3, prev - 0.15))}
+                        className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Zoom Out (-)"
+                      >
+                        <ZoomOutIcon className="w-4 h-4" />
+                      </button>
 
-                    <button
-                      onClick={() => {
-                        setZoomScale(0.85);
-                        setPanOffset({ x: 40, y: 40 });
-                      }}
-                      className="px-2 py-1 text-xs font-mono font-bold text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Reset Zoom & Pan"
-                    >
-                      {Math.round(zoomScale * 100)}%
-                    </button>
+                      <button
+                        onClick={() => {
+                          setZoomScale(0.85);
+                          setPanOffset({ x: 40, y: 40 });
+                        }}
+                        className="px-2 py-1 text-xs font-mono font-bold text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Reset Zoom & Pan"
+                      >
+                        {Math.round(zoomScale * 100)}%
+                      </button>
 
-                    <button
-                      onClick={() => {
-                        setZoomScale(0.85);
-                        setPanOffset({ x: 40, y: 40 });
-                      }}
-                      className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Fit to Screen"
-                    >
-                      <FitScreenIcon className="w-4 h-4" />
-                    </button>
+                      <button
+                        onClick={() => {
+                          setZoomScale(0.85);
+                          setPanOffset({ x: 40, y: 40 });
+                        }}
+                        className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Fit to Screen"
+                      >
+                        <FitScreenIcon className="w-4 h-4" />
+                      </button>
 
-                    <button
-                      onClick={() => arrangeDiagramGrid(tables)}
-                      className="p-1.5 text-theme-accentPrimary hover:bg-theme-surface rounded-lg transition flex items-center space-x-1"
-                      title="Auto-arrange Grid Layout"
-                    >
-                      <LayoutGridIcon className="w-4 h-4" />
-                      <span className="text-[11px] font-mono font-semibold hidden sm:inline">Auto Layout</span>
-                    </button>
+                      <button
+                        onClick={() => arrangeDiagramGrid(tables)}
+                        className="p-1.5 text-theme-accentPrimary hover:bg-theme-surface rounded-lg transition flex items-center space-x-1"
+                        title="Auto-arrange Grid Layout"
+                      >
+                        <LayoutGridIcon className="w-4 h-4" />
+                        <span className="text-[11px] font-mono font-semibold hidden sm:inline">Auto Layout</span>
+                      </button>
+                    </div>
 
                     <div className="h-4 w-px bg-theme-border mx-1" />
 
                     {/* EXPORT & CAPTURE TOOLBAR */}
                     <button
                       onClick={exportHighResPng}
-                      className="px-2.5 py-1.5 bg-user-gradient text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 shadow-sm hover:brightness-110"
+                      data-schema-tour-export-png="true"
+                      className="px-2.5 py-1.5 bg-user-gradient text-white rounded-lg text-xs font-bold transition flex items-center space-x-1 shadow-sm hover:brightness-110 active:scale-95"
                       title="Export High-Resolution PNG Screenshot for Documentation"
                     >
                       <CameraIcon className="w-3.5 h-3.5" />
                       <span>PNG Photo</span>
                     </button>
 
-                    <button
-                      onClick={exportSvg}
-                      className="px-2.5 py-1.5 bg-theme-surface hover:bg-theme-card border border-theme-border text-theme-text rounded-lg text-xs font-semibold transition flex items-center space-x-1"
-                      title="Export Vector SVG File for Docs & Scaling"
-                    >
-                      <NetworkLinkIcon className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>SVG Vector</span>
-                    </button>
+                    <div data-schema-tour-export-docs="true" className="flex items-center space-x-1">
+                      <button
+                        onClick={exportSvg}
+                        className="px-2.5 py-1.5 bg-theme-surface hover:bg-theme-card border border-theme-border text-theme-text rounded-lg text-xs font-semibold transition flex items-center space-x-1"
+                        title="Export Vector SVG File for Docs & Scaling"
+                      >
+                        <NetworkLinkIcon className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>SVG Vector</span>
+                      </button>
 
-                    <button
-                      onClick={exportMarkdownDoc}
-                      className="px-2.5 py-1.5 bg-theme-surface hover:bg-theme-card border border-theme-border text-theme-text rounded-lg text-xs font-semibold transition flex items-center space-x-1"
-                      title="Export Full Markdown (.md) Document & Mermaid Syntax"
-                    >
-                      <DownloadDocIcon className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Markdown (.md)</span>
-                    </button>
+                      <button
+                        onClick={exportMarkdownDoc}
+                        className="px-2.5 py-1.5 bg-theme-surface hover:bg-theme-card border border-theme-border text-theme-text rounded-lg text-xs font-semibold transition flex items-center space-x-1"
+                        title="Export Full Markdown (.md) Document & Mermaid Syntax"
+                      >
+                        <DownloadDocIcon className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Markdown (.md)</span>
+                      </button>
 
-                    <button
-                      onClick={copyMermaidToClipboard}
-                      className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Copy Mermaid ERD Syntax to Clipboard"
-                    >
-                      <CopyClipboardIcon className="w-4 h-4 text-emerald-400" />
-                    </button>
+                      <button
+                        onClick={copyMermaidToClipboard}
+                        className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Copy Mermaid ERD Syntax to Clipboard"
+                      >
+                        <CopyClipboardIcon className="w-4 h-4 text-emerald-400" />
+                      </button>
 
-                    <button
-                      onClick={printErd}
-                      className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
-                      title="Print / Save as PDF"
-                    >
-                      <PrinterIcon className="w-4 h-4" />
-                    </button>
+                      <button
+                        onClick={printErd}
+                        className="p-1.5 text-theme-text hover:bg-theme-surface rounded-lg transition"
+                        title="Print / Save as PDF"
+                      >
+                        <PrinterIcon className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* ERD DIAGRAM INNER TRANSFORM CANVAS */}
@@ -1025,6 +1052,13 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* INTERACTIVE SCHEMA & ERD WALKTHROUGH TOUR */}
+      <SchemaWalkthroughTour
+        isActive={isSchemaTourActive}
+        onComplete={() => setIsSchemaTourActive(false)}
+        onSwitchTab={(tab) => setActiveTab(tab)}
+      />
     </div>
   );
 };

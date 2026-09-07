@@ -20,7 +20,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (config.action === 'Backup') {
       return ipcRenderer.invoke('sqlcmd:backup', config);
     } else if (config.action === 'Restore_Bak') {
-      return ipcRenderer.invoke('sqlcmd:restore', { connConfig: config, bakFilePath: config.targetFile, fileMoves });
+      return ipcRenderer.invoke('sqlcmd:restore', {
+        ...config,
+        targetDatabase: config.database || config.targetDatabase,
+        bakFilePath: config.targetFile || config.bakFilePath,
+        fileMoves: fileMoves || [],
+      });
     } else {
       return ipcRenderer.invoke('sqlpackage:export', config);
     }

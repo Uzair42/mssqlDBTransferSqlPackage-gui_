@@ -348,8 +348,7 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
 
     if (config.authType === 'windows') {
       if (config.useCurrentWindowsUser || !config.username || config.username.trim().length === 0) {
-        // SSPI / Integrated Security for current logged in Windows user
-        args.push('/SourceIntegratedSecurity:True');
+        // In sqlpackage CLI, omitting SourceUser and SourcePassword automatically enables Integrated Windows Authentication (SSPI)
       } else {
         const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
         args.push(`/SourceUser:${fullUser}`);
@@ -395,8 +394,7 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
 
     if (config.authType === 'windows') {
       if (config.useCurrentWindowsUser || !config.username || config.username.trim().length === 0) {
-        // SSPI / Integrated Security for current logged in Windows user
-        args.push('/TargetIntegratedSecurity:True');
+        // In sqlpackage CLI, omitting TargetUser and TargetPassword automatically enables Integrated Windows Authentication (SSPI)
       } else {
         const fullUser = config.domain ? `${config.domain}\\${config.username}` : config.username;
         args.push(`/TargetUser:${fullUser}`);
@@ -635,9 +633,26 @@ export async function exportDatabase(
     }
   };
 
+  // Auto-handle WhatsApp .zip downloads (WhatsApp renames .bacpac to .zip)
+  let effectiveConfig = { ...config };
+  let tempBacpacFile: string | null = null;
+
+  if (config.action === 'Import' && config.targetFile && config.targetFile.toLowerCase().endsWith('.zip') && fs.existsSync(config.targetFile)) {
+    const baseName = path.basename(config.targetFile).replace(/\.zip$/i, '');
+    const finalName = baseName.toLowerCase().endsWith('.bacpac') ? baseName : `${baseName}.bacpac`;
+    tempBacpacFile = path.join(os.tmpdir(), `import_wa_${Date.now()}_${finalName}`);
+    try {
+      fs.copyFileSync(config.targetFile, tempBacpacFile);
+      effectiveConfig.targetFile = tempBacpacFile;
+      logEvent('info', `Detected WhatsApp .zip package. Processed as valid .bacpac: ${tempBacpacFile}\n`);
+    } catch (e: any) {
+      logEvent('stderr', `Warning: Could not create temp .bacpac alias: ${e.message}\n`);
+    }
+  }
+
   // If Importing, prepare target DB by dropping existing DB if present (prevents SQL71659 error)
-  if (config.action === 'Import' && config.database) {
-    const dbName = config.database.replace(/'/g, "''");
+  if (effectiveConfig.action === 'Import' && effectiveConfig.database) {
+    const dbName = effectiveConfig.database.replace(/'/g, "''");
     const sql = `
       IF EXISTS (SELECT name FROM sys.databases WHERE name = N'${dbName}')
       BEGIN
@@ -645,14 +660,14 @@ export async function exportDatabase(
           DROP DATABASE [${dbName}];
       END
     `;
-    logEvent('info', `Preparing target database [${config.database}] on server...\n`);
-    await executeSqlQuery({ ...config, database: 'master' }, sql);
-    logEvent('info', `✓ Target database [${config.database}] ready for fresh import.\n`);
+    logEvent('info', `Preparing target database [${effectiveConfig.database}] on server...\n`);
+    await executeSqlQuery({ ...effectiveConfig, database: 'master' }, sql);
+    logEvent('info', `✓ Target database [${effectiveConfig.database}] ready for fresh import.\n`);
   }
 
   return new Promise((resolve) => {
     const executablePath = getExecutablePath();
-    const args = buildSqlpackageArgs(config);
+    const args = buildSqlpackageArgs(effectiveConfig);
 
     // Display args with masked password for UI console
     const displayArgs = args.map((arg) =>
@@ -708,6 +723,9 @@ export async function exportDatabase(
 
       activeChildProcess.on('close', (code: number | null, signal: string | null) => {
         activeChildProcess = null;
+        if (tempBacpacFile && fs.existsSync(tempBacpacFile)) {
+          try { fs.unlinkSync(tempBacpacFile); } catch (_) {}
+        }
         if (signal === 'SIGTERM' || signal === 'SIGKILL') {
           logEvent('info', 'Process was manually terminated by user.');
           resolve({

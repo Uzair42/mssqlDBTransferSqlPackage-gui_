@@ -232,9 +232,15 @@ export async function backupDatabase(
 // ---------------------------------------------------------------------------
 
 export async function restoreDatabase(
-  cfg: RestoreBakConfig,
+  rawCfg: RestoreBakConfig | any,
   window: BrowserWindow
 ): Promise<{ success: boolean; message: string }> {
+
+  // Defensively extract connection configuration whether flat or nested
+  const cfg = rawCfg?.connConfig ? { ...rawCfg.connConfig, ...rawCfg } : (rawCfg || {});
+  const targetDb = (cfg.targetDatabase || cfg.database || '').trim();
+  const rawBakPath = (cfg.bakFilePath || cfg.targetFile || '').trim();
+  const fileMoves = cfg.fileMoves || [];
 
   const logEvent = (type: string, text: string) => {
     if (window && !window.isDestroyed()) {
@@ -246,8 +252,20 @@ export async function restoreDatabase(
     }
   };
 
-  // Ensure .bak is accessible
-  const { accessiblePath, copied, error: copyError } = ensureBakAccessible(cfg.bakFilePath);
+  if (!targetDb) {
+    const err = 'Target database name is required for restore.';
+    logEvent('error', err);
+    return { success: false, message: err };
+  }
+
+  if (!rawBakPath) {
+    const err = 'Source .bak file path is required for restore.';
+    logEvent('error', err);
+    return { success: false, message: err };
+  }
+
+  // Ensure .bak is accessible to MSSQL
+  const { accessiblePath, copied, error: copyError } = ensureBakAccessible(rawBakPath);
   if (copyError) {
     logEvent('stderr', `Warning: ${copyError}`);
   }
@@ -255,17 +273,27 @@ export async function restoreDatabase(
     logEvent('info', `Copied .bak to MSSQL backup directory: ${accessiblePath}`);
   }
 
-  const dbName = cfg.targetDatabase.replace(/'/g, "''");
+  const dbName = targetDb.replace(/'/g, "''");
   const bakPath = accessiblePath.replace(/'/g, "''");
 
-  // Build WITH MOVE clauses
-  const moveClauses = cfg.fileMoves
-    .map((m) => `MOVE N'${m.logicalName.replace(/'/g, "''")}' TO N'${m.targetPath.replace(/'/g, "''")}'`)
-    .join(',\n     ');
+  // Build WITH MOVE clauses if provided
+  let moveClauses = '';
+  if (Array.isArray(fileMoves) && fileMoves.length > 0) {
+    const validMoves = fileMoves.filter((m: any) => m && m.logicalName && m.targetPath);
+    if (validMoves.length > 0) {
+      moveClauses = validMoves
+        .map((m: any) => `MOVE N'${m.logicalName.replace(/'/g, "''")}' TO N'${m.targetPath.replace(/'/g, "''")}'`)
+        .join(',\n     ');
+    }
+  }
 
-  const sql = `RESTORE DATABASE [${dbName}] FROM DISK = N'${bakPath}'\nWITH ${moveClauses},\n     REPLACE, STATS = 5;`;
+  const withOptions = moveClauses
+    ? `WITH ${moveClauses},\n     REPLACE, STATS = 5;`
+    : `WITH REPLACE, STATS = 5;`;
 
-  logEvent('info', `Starting native RESTORE DATABASE...\nTarget Database: ${cfg.targetDatabase}\nSource .bak: ${accessiblePath}\n`);
+  const sql = `RESTORE DATABASE [${dbName}] FROM DISK = N'${bakPath}'\n${withOptions}`;
+
+  logEvent('info', `Starting native RESTORE DATABASE...\nTarget Database: ${targetDb}\nSource .bak: ${accessiblePath}\n`);
   logEvent('info', `Executing T-SQL:\n${sql}\n`);
 
   const dbConfig: DbConnectionConfig = {
@@ -281,21 +309,33 @@ export async function restoreDatabase(
 
   if (!res.success) {
     let errMsg = `Restore failed: ${res.message}`;
-    if (
+
+    // Handle Version Incompatibility Error 3169
+    if (res.message && (res.message.includes('3169') || res.message.includes('incompatible with this server') || res.message.includes('backed up on a server running version'))) {
+      errMsg += '\n\n════════════════════════════════════════════════════════════════\n' +
+        '⚠️ MSSQL VERSION DOWNGRADE INCOMPATIBILITY DETECTED (Error 3169)\n' +
+        '════════════════════════════════════════════════════════════════\n' +
+        'Native .bak files CANNOT be restored from a newer SQL Server version into an older SQL Server version.\n\n' +
+        'Solution: Switch to the "Export / Import .bacpac" tab in this app.\n' +
+        '.bacpac export extracts the schema and data in a version-agnostic format that can be imported onto ANY SQL Server version (e.g. SQL Server 2012/2014/2016/2019/2022 on Windows or Linux).\n' +
+        '════════════════════════════════════════════════════════════════';
+    } else if (
       res.message &&
       (res.message.includes('Cannot open backup device') || res.message.includes('Operating system error 5'))
     ) {
       errMsg += '\n\nPermission denied. On Linux, ensure the .bak file is in /var/opt/mssql/backup/ and owned by mssql user:\nsudo chown mssql:mssql ' + accessiblePath;
+    } else if (res.message && res.message.includes('Operating system error 3')) {
+      errMsg += '\n\nPath not found. When restoring a Windows .bak onto Linux (or vice versa), ensure the physical file paths in WITH MOVE are set to the target OS format (e.g. /var/opt/mssql/data/ on Linux or C:\\Program Files\\... on Windows).';
+    } else if (res.message && res.message.includes('exclusive access')) {
+      errMsg += '\n\nThe database is currently in use. Close all connections to it first or alter it to single user mode.';
     }
-    if (res.message && res.message.includes('exclusive access')) {
-      errMsg += '\n\nThe database is currently in use. Close all connections to it first.';
-    }
+
     logEvent('error', errMsg);
     return { success: false, message: errMsg };
   }
 
-  logEvent('info', `✓ Database [${cfg.targetDatabase}] restored successfully!`);
-  return { success: true, message: `Database [${cfg.targetDatabase}] restored successfully from ${cfg.bakFilePath}` };
+  logEvent('info', `✓ Database [${targetDb}] restored successfully!`);
+  return { success: true, message: `Database [${targetDb}] restored successfully from ${accessiblePath}` };
 }
 
 // ---------------------------------------------------------------------------
