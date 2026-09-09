@@ -150,6 +150,45 @@ export interface TableSchemaInfo {
   columns: TableColumnDetails[];
 }
 
+export interface DatabasePhysicalFileInfo {
+  logicalName: string;
+  physicalName: string;
+  typeDesc: string; // 'ROWS' (.mdf/.ndf) | 'LOG' (.ldf) | 'FILESTREAM'
+  sizeMB: number;
+  growthMB: number;
+  stateDesc: string;
+}
+
+export type ThemeType = 
+  | 'theme-lime-coral' 
+  | 'theme-mint-emerald' 
+  | 'theme-sage-plum' 
+  | 'theme-sunset-mint' 
+  | 'theme-olive-moss'
+  | 'theme-pure-black'
+  | 'theme-pure-white'
+  | 'theme-monochrome-pro';
+
+export type TypographyType =
+  | 'font-jakarta'
+  | 'font-inter'
+  | 'font-jetbrains'
+  | 'font-outfit'
+  | 'font-roboto'
+  | 'font-space';
+
+export type FontSizeScale =
+  | 'scale-compact'
+  | 'scale-normal'
+  | 'scale-large'
+  | 'scale-xlarge';
+
+export interface AppearanceSettings {
+  theme: ThemeType;
+  typography: TypographyType;
+  fontSize: FontSizeScale;
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -163,6 +202,7 @@ declare global {
       testConnection: (config: ConnectionConfig) => Promise<ConnectionTestResult>;
       fetchDatabases: (config: ConnectionConfig) => Promise<{ success: boolean; databases?: string[]; serverInfo?: ServerVersionInfo; message?: string }>;
       fetchDatabaseSchema: (config: ConnectionConfig, databaseName?: string) => Promise<{ success: boolean; tables?: TableSchemaInfo[]; relationships?: TableRelationshipInfo[]; message?: string }>;
+      fetchDatabaseFiles: (config: ConnectionConfig, databaseName?: string) => Promise<{ success: boolean; files?: DatabasePhysicalFileInfo[]; dataPath?: string; logPath?: string; message?: string }>;
       fetchTableData: (config: ConnectionConfig, schemaName: string, tableName: string, databaseName?: string, limit?: number) => Promise<{ success: boolean; columns?: string[]; rows?: any[]; message?: string }>;
       exportDatabase: (config: ConnectionConfig) => Promise<{ success: boolean; message: string }>;
       cancelExport: () => Promise<{ success: boolean; message: string }>;
@@ -188,6 +228,7 @@ declare global {
       getWiFiStatus: () => Promise<WiFiServerInfo | null>;
       getNetworkIPs: () => Promise<NetworkIPInfo[]>;
       triggerBluetooth: (filePath: string) => Promise<{ success: boolean; message: string }>;
+      downloadFromRemote: (serverAddress: string, pin: string, targetDirectory?: string) => Promise<{ success: boolean; filePath?: string; fileName?: string; sizeBytes?: number; message?: string }>;
 
       // Event listeners
       onLog?: (callback: (log: { type: 'info' | 'stdout' | 'stderr' | 'error'; timestamp: string; content: string }) => void) => () => void;
@@ -197,3 +238,4 @@ declare global {
     };
   }
 }
+

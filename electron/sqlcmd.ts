@@ -198,33 +198,137 @@ export async function backupDatabase(
     }
   };
 
-  const dbName = cfg.database.replace(/'/g, "''");
-  const backupPath = cfg.backupPath.replace(/'/g, "''");
+  const dbName = (cfg.database || '').replace(/'/g, "''");
+  const rawTargetFile = (cfg.backupPath || (cfg as any).targetFile || '').trim();
 
-  logEvent('info', `Starting native BACKUP DATABASE...\nDatabase: ${cfg.database}\nDestination: ${cfg.backupPath}\n`);
+  if (!dbName) {
+    const err = 'Database name is required for backup.';
+    logEvent('error', err);
+    return { success: false, message: err };
+  }
 
-  const sql = `BACKUP DATABASE [${dbName}] TO DISK = N'${backupPath}' WITH FORMAT, INIT, NAME = N'${dbName}-Full Database Backup', COMPRESSION, STATS = 5;`;
+  if (!rawTargetFile) {
+    const err = 'Destination .bak file path is required for backup.';
+    logEvent('error', err);
+    return { success: false, message: err };
+  }
 
-  logEvent('info', `Executing T-SQL:\n${sql}\n`);
+  // Normalize relative paths to absolute paths
+  const resolvedTargetFile = path.isAbsolute(rawTargetFile) ? rawTargetFile : path.resolve(process.cwd(), rawTargetFile);
 
   const dbConfig: DbConnectionConfig = {
     ...cfg,
     database: 'master',
   };
 
-  const res = await executeSqlStreaming(dbConfig, sql, {
-    onMessage: (msg: string) => {
-      logEvent('stdout', msg);
-    },
+  logEvent('info', `Starting native BACKUP DATABASE...\nDatabase: [${cfg.database}]\nRequested Destination: ${resolvedTargetFile}\n`);
+
+  // Detect SQL Server native backup and data directories dynamically
+  let nativeBackupDir = getDefaultBackupDir();
+  let nativeDataDir = getDefaultDataDir();
+
+  try {
+    const pathQuery = `
+      SELECT 
+        CAST(SERVERPROPERTY('InstanceDefaultBackupPath') AS NVARCHAR(512)) AS DefaultBackupPath,
+        CAST(SERVERPROPERTY('InstanceDefaultDataPath') AS NVARCHAR(512)) AS DefaultDataPath;
+    `;
+    const pathResult = await executeSqlQuery<{ DefaultBackupPath?: string; DefaultDataPath?: string }>(dbConfig, pathQuery);
+    if (pathResult.success && pathResult.rows && pathResult.rows.length > 0) {
+      if (pathResult.rows[0].DefaultBackupPath) {
+        nativeBackupDir = pathResult.rows[0].DefaultBackupPath;
+      }
+      if (pathResult.rows[0].DefaultDataPath) {
+        nativeDataDir = pathResult.rows[0].DefaultDataPath;
+      }
+    }
+  } catch (_) {}
+
+  // 1. Try backing up directly to requested path (if already absolute and within server scope)
+  const sanitizedDirectPath = resolvedTargetFile.replace(/'/g, "''");
+  // Universal backup syntax without hardcoded COMPRESSION (which fails on Express edition)
+  let directSql = `BACKUP DATABASE [${dbName}] TO DISK = N'${sanitizedDirectPath}' WITH FORMAT, INIT, NAME = N'${dbName}-Full Database Backup', STATS = 5;`;
+  logEvent('info', `Executing T-SQL:\n${directSql}\n`);
+
+  let res = await executeSqlStreaming(dbConfig, directSql, {
+    onMessage: (msg: string) => logEvent('stdout', msg),
   });
 
+  // 2. If direct backup failed (e.g. OS error 2, OS error 5, path not found or access denied by mssql service)
   if (!res.success) {
-    logEvent('error', `Backup failed: ${res.message}`);
-    return { success: false, message: `Backup failed: ${res.message}` };
+    const failureReason = res.message || 'Access restricted by SQL Server service account';
+    logEvent('stderr', `Direct write to "${resolvedTargetFile}" was not permitted by SQL Server engine (${failureReason}).\nInitiating automatic server-side native backup...\n`);
+
+    // Candidate server-writable directories (deduplicated)
+    const candidateDirs = Array.from(new Set([nativeBackupDir, nativeDataDir, getDefaultBackupDir(), getDefaultDataDir()].filter(Boolean)));
+    let backupSuccessful = false;
+    let successfulServerPath = '';
+
+    for (const dir of candidateDirs) {
+      if (!dir) continue;
+      const tempBakName = `${dbName}_${Date.now()}.bak`;
+      const serverCandidatePath = path.join(dir, tempBakName);
+      const sanitizedCandidate = serverCandidatePath.replace(/'/g, "''");
+
+      const serverSql = `BACKUP DATABASE [${dbName}] TO DISK = N'${sanitizedCandidate}' WITH FORMAT, INIT, NAME = N'${dbName}-Native Backup', STATS = 5;`;
+      logEvent('info', `Attempting server-side backup via: ${serverCandidatePath}\n`);
+
+      const serverRes = await executeSqlStreaming(dbConfig, serverSql, {
+        onMessage: (msg: string) => logEvent('stdout', msg),
+      });
+
+      if (serverRes.success) {
+        backupSuccessful = true;
+        successfulServerPath = serverCandidatePath;
+        res = serverRes;
+        break;
+      }
+    }
+
+    if (backupSuccessful && successfulServerPath) {
+      try {
+        const destDir = path.dirname(resolvedTargetFile);
+        if (!fs.existsSync(destDir)) {
+          fs.mkdirSync(destDir, { recursive: true });
+        }
+
+        // Try unprivileged copy
+        try {
+          fs.copyFileSync(successfulServerPath, resolvedTargetFile);
+          logEvent('info', `✓ Successfully saved .bak backup to target destination: ${resolvedTargetFile}\n`);
+          return { success: true, message: `Backup completed successfully: ${resolvedTargetFile}` };
+        } catch (copyErr: any) {
+          // On Linux, if SQL Server created file with permissions restricted to mssql user, use elevated copy
+          if (process.platform === 'linux') {
+            try {
+              const escapedSrc = successfulServerPath.replace(/'/g, "'\\''");
+              const escapedDst = resolvedTargetFile.replace(/'/g, "'\\''");
+              execSync(`pkexec cp "${escapedSrc}" "${escapedDst}" && chmod 666 "${escapedDst}"`, { timeout: 30000 });
+              if (fs.existsSync(resolvedTargetFile)) {
+                logEvent('info', `✓ Successfully saved elevated .bak backup to target destination: ${resolvedTargetFile}\n`);
+                return { success: true, message: `Backup completed successfully: ${resolvedTargetFile}` };
+              }
+            } catch (_) {}
+          }
+
+          logEvent('info', `✓ Backup generated at SQL Server path: ${successfulServerPath}\n(Could not copy to ${resolvedTargetFile}: ${copyErr.message})\n`);
+          return { success: true, message: `Backup created at server path: ${successfulServerPath}` };
+        }
+      } catch (err: any) {
+        logEvent('info', `✓ Backup generated at SQL Server path: ${successfulServerPath}\n`);
+        return { success: true, message: `Backup created at: ${successfulServerPath}` };
+      }
+    }
   }
 
-  logEvent('info', `✓ Backup completed successfully!\nFile saved to: ${cfg.backupPath}`);
-  return { success: true, message: `Backup completed: ${cfg.backupPath}` };
+  if (!res.success) {
+    const errorMsg = res.message || 'Unknown backup execution error';
+    logEvent('error', `Backup failed: ${errorMsg}`);
+    return { success: false, message: `Backup failed: ${errorMsg}` };
+  }
+
+  logEvent('info', `✓ Backup completed successfully!\nFile saved to: ${resolvedTargetFile}`);
+  return { success: true, message: `Backup completed: ${resolvedTargetFile}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -371,3 +475,75 @@ export async function getServerDefaultPaths(
     logPath: logPath || dataPath || defaultDir,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Query Physical .mdf/.ldf Data & Log Files for Database
+// ---------------------------------------------------------------------------
+
+export async function getDatabasePhysicalFiles(
+  cfg: SqlcmdConnectionConfig,
+  databaseName?: string
+): Promise<{
+  success: boolean;
+  files?: Array<{
+    logicalName: string;
+    physicalName: string;
+    typeDesc: string;
+    sizeMB: number;
+    growthMB: number;
+    stateDesc: string;
+  }>;
+  dataPath?: string;
+  logPath?: string;
+  message?: string;
+}> {
+  const targetDb = (databaseName || (cfg as any).database || 'master').replace(/'/g, "''");
+  const sql = `
+    SELECT 
+      mf.name AS logicalName,
+      mf.physical_name AS physicalName,
+      mf.type_desc AS typeDesc,
+      CAST((mf.size * 8.0 / 1024) AS DECIMAL(10,2)) AS sizeMB,
+      CAST((CASE WHEN mf.is_percent_growth = 1 THEN (mf.size * 8.0 / 1024) * (mf.growth / 100.0) ELSE (mf.growth * 8.0 / 1024) END) AS DECIMAL(10,2)) AS growthMB,
+      mf.state_desc AS stateDesc
+    FROM sys.master_files mf
+    JOIN sys.databases d ON mf.database_id = d.database_id
+    WHERE d.name = N'${targetDb}'
+    ORDER BY mf.type;
+  `;
+
+  const dbConfig: DbConnectionConfig = {
+    ...cfg,
+    database: 'master',
+    connectTimeout: 5000,
+    requestTimeout: 10000,
+  };
+
+  const res = await executeSqlQuery(dbConfig, sql);
+
+  if (!res.success) {
+    return {
+      success: false,
+      message: `Failed to inspect physical files for database [${targetDb}]: ${res.message}`,
+    };
+  }
+
+  const files = (res.rows || []).map((r: any) => ({
+    logicalName: r['logicalName'] || r['name'] || '',
+    physicalName: r['physicalName'] || r['physical_name'] || '',
+    typeDesc: r['typeDesc'] || r['type_desc'] || 'ROWS',
+    sizeMB: Number(r['sizeMB'] || 0),
+    growthMB: Number(r['growthMB'] || 0),
+    stateDesc: r['stateDesc'] || r['state_desc'] || 'ONLINE',
+  }));
+
+  const paths = await getServerDefaultPaths(cfg);
+
+  return {
+    success: true,
+    files,
+    dataPath: paths.dataPath,
+    logPath: paths.logPath,
+  };
+}
+

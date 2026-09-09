@@ -117,6 +117,72 @@
   --theme-gradient-webkit: -webkit-linear-gradient(90deg, hsla(64, 73%, 16%, 1) 0%, hsla(65, 59%, 31%, 1) 100%);
 }
 
+.theme-pure-black {
+  --theme-bg: #000000;
+  --theme-surface: #0a0a0a;
+  --theme-card: #121212;
+  --theme-card-hover: #1c1c1c;
+  --theme-border: #262626;
+  --theme-text: #ffffff;
+  --theme-muted: #a3a3a3;
+  --theme-accent: #ffffff;
+  --theme-accent-end: #737373;
+  --theme-accent-primary: #00f2fe;
+  --theme-accent-secondary: #4facfe;
+  --theme-accent-tertiary: #f59e0b;
+  --theme-badge-export: #00f2fe;
+  --theme-badge-import: #a855f7;
+  --theme-badge-backup: #f59e0b;
+  --theme-badge-restore: #ec4899;
+  --theme-gradient: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+}
+
+.theme-pure-white {
+  --theme-bg: #f8fafc;
+  --theme-surface: #ffffff;
+  --theme-card: #ffffff;
+  --theme-card-hover: #f1f5f9;
+  --theme-border: #cbd5e1;
+  --theme-text: #0f172a;
+  --theme-muted: #475569;
+  --theme-accent: #0f172a;
+  --theme-accent-end: #334155;
+  --theme-accent-primary: #0284c7;
+  --theme-accent-secondary: #059669;
+  --theme-accent-tertiary: #d97706;
+  --theme-badge-export: #0284c7;
+  --theme-badge-import: #7c3aed;
+  --theme-badge-backup: #d97706;
+  --theme-badge-restore: #db2777;
+  --theme-gradient: linear-gradient(90deg, #0284c7 0%, #0369a1 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, #0284c7 0%, #0369a1 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, #0284c7 0%, #0369a1 100%);
+}
+
+.theme-monochrome-pro {
+  --theme-bg: #09090b;
+  --theme-surface: #141417;
+  --theme-card: #18181b;
+  --theme-card-hover: #27272a;
+  --theme-border: #3f3f46;
+  --theme-text: #fafafa;
+  --theme-muted: #a1a1aa;
+  --theme-accent: #fafafa;
+  --theme-accent-end: #71717a;
+  --theme-accent-primary: #f4f4f5;
+  --theme-accent-secondary: #a1a1aa;
+  --theme-accent-tertiary: #71717a;
+  --theme-badge-export: #fafafa;
+  --theme-badge-import: #d4d4d8;
+  --theme-badge-backup: #a1a1aa;
+  --theme-badge-restore: #71717a;
+  --theme-gradient: linear-gradient(90deg, #fafafa 0%, #71717a 100%);
+  --theme-gradient-moz: -moz-linear-gradient(90deg, #fafafa 0%, #71717a 100%);
+  --theme-gradient-webkit: -webkit-linear-gradient(90deg, #fafafa 0%, #71717a 100%);
+}
+
 input::placeholder, textarea::placeholder {
   color: #94a3b8 !important;
   opacity: 1 !important;
@@ -127,9 +193,29 @@ input::placeholder, textarea::placeholder {
     background-color: var(--theme-bg);
     color: var(--theme-text);
     font-family: 'Plus Jakarta Sans', sans-serif;
-    transition: background-color 0.3s ease, color 0.3s ease;
+    transition: background-color 0.25s ease, color 0.25s ease;
   }
 }
+
+/* Typography Font Families */
+.font-inter { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important; }
+.font-jetbrains { font-family: 'JetBrains Mono', monospace !important; }
+.font-outfit { font-family: 'Outfit', sans-serif !important; }
+.font-roboto { font-family: 'Roboto', sans-serif !important; }
+.font-space { font-family: 'Space Grotesk', sans-serif !important; }
+.font-jakarta { font-family: 'Plus Jakarta Sans', sans-serif !important; }
+
+/* UI Font Size / Scaling */
+.scale-compact { font-size: 13px; }
+.scale-compact input, .scale-compact button, .scale-compact select { font-size: 12px; }
+
+.scale-normal { font-size: 14px; }
+
+.scale-large { font-size: 15.5px; }
+.scale-large input, .scale-large button, .scale-large select { font-size: 14.5px; }
+
+.scale-xlarge { font-size: 17px; }
+.scale-xlarge input, .scale-xlarge button, .scale-xlarge select { font-size: 16px; }
 
 /* User Gradient Utilities */
 .bg-user-gradient {

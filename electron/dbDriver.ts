@@ -313,18 +313,20 @@ export async function executeSqlStreaming(
         requestTimeout: 0, // Infinite timeout for backup/restore
       });
       const connection = new TediousConnection(tediousConfig);
+      let capturedError: string | null = null;
 
       connection.on('connect', (err: any) => {
         if (err) {
           try { connection.close(); } catch (_) {}
-          resolve({ success: false, message: `Connection failed: ${err.message}` });
+          resolve({ success: false, message: `Connection failed: ${err.message || String(err)}` });
           return;
         }
 
         const request = new TediousRequest(sql, (queryErr: any) => {
           try { connection.close(); } catch (_) {}
-          if (queryErr) {
-            resolve({ success: false, message: queryErr.message });
+          if (queryErr || capturedError) {
+            const finalErr = queryErr?.message || queryErr?.text || capturedError || (queryErr ? String(queryErr) : 'Unknown SQL execution error');
+            resolve({ success: false, message: finalErr });
           } else {
             resolve({ success: true });
           }
@@ -346,9 +348,35 @@ export async function executeSqlStreaming(
           }
         });
 
+        request.on('errorMessage' as any, (err: any) => {
+          if (err) {
+            const msg = err.message || err.text || String(err);
+            capturedError = msg;
+            if (callbacks.onMessage) {
+              callbacks.onMessage(`[Server Message] ${msg}`);
+            }
+          }
+        });
+
+        request.on('error', (err: any) => {
+          if (err) {
+            capturedError = err.message || String(err);
+          }
+        });
+
         connection.on('infoMessage', (info: any) => {
           if (info && info.message && callbacks.onMessage) {
             callbacks.onMessage(info.message);
+          }
+        });
+
+        connection.on('errorMessage', (err: any) => {
+          if (err) {
+            const msg = err.message || err.text || String(err);
+            capturedError = msg;
+            if (callbacks.onMessage) {
+              callbacks.onMessage(`[Server Error] ${msg}`);
+            }
           }
         });
 
@@ -356,12 +384,14 @@ export async function executeSqlStreaming(
       });
 
       connection.on('error', (err: any) => {
-        resolve({ success: false, message: err.message || 'Connection error' });
+        const msg = err?.message || String(err || 'Connection error');
+        capturedError = msg;
+        resolve({ success: false, message: msg });
       });
 
       connection.connect();
     } catch (err: any) {
-      resolve({ success: false, message: (err as Error).message });
+      resolve({ success: false, message: (err as Error).message || String(err) });
     }
   });
 }

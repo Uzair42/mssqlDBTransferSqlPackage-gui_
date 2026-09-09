@@ -11,6 +11,7 @@ import {
   restoreDatabase,
   getFileListOnly,
   getServerDefaultPaths,
+  getDatabasePhysicalFiles,
   BackupBakConfig,
   RestoreBakConfig,
   SqlcmdConnectionConfig,
@@ -22,9 +23,36 @@ import {
   getWiFiServerStatus,
   getNetworkInterfaces,
   triggerBluetoothSend,
+  downloadBackupFromRemote,
 } from './transfer';
 
 let mainWindow: BrowserWindow | null = null;
+
+function getAppIconPath(): string | undefined {
+  const iconCandidates = process.platform === 'win32'
+    ? [
+        path.join(__dirname, '../build/icon.ico'),
+        path.join(__dirname, '../public/assets/icon.ico'),
+        path.join(process.resourcesPath, 'build/icon.ico'),
+        path.join(process.resourcesPath, 'public/assets/icon.ico'),
+        path.join(__dirname, '../build/icon.png'),
+        path.join(__dirname, '../public/assets/icon.png'),
+      ]
+    : [
+        path.join(__dirname, '../build/icons/512x512.png'),
+        path.join(__dirname, '../build/icon.png'),
+        path.join(__dirname, '../public/assets/icon.png'),
+        path.join(process.resourcesPath, 'build/icons/512x512.png'),
+        path.join(process.resourcesPath, 'public/assets/icon.png'),
+      ];
+
+  for (const candidate of iconCandidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
 
 function createWindow() {
   // Remove default top menu bar in production release
@@ -32,12 +60,15 @@ function createWindow() {
     Menu.setApplicationMenu(null);
   }
 
+  const appIcon = getAppIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 800,
     minWidth: 940,
     minHeight: 700,
     title: 'MSSQL Database Migrator',
+    icon: appIcon,
     backgroundColor: '#05120a',
     show: false, // Prevent white/blank screen flicker on application startup
     webPreferences: {
@@ -270,3 +301,14 @@ ipcMain.handle('transfer:get-network-ips', async () => {
 ipcMain.handle('transfer:trigger-bluetooth', async (_event, filePath: string) => {
   return await triggerBluetoothSend(filePath);
 });
+
+// ─── IPC: Database Physical Files (.mdf / .ldf) ─────────────────────
+ipcMain.handle('db:get-database-files', async (_event, config: SqlcmdConnectionConfig, databaseName?: string) => {
+  return await getDatabasePhysicalFiles(config, databaseName);
+});
+
+// ─── IPC: Download Backup from Remote Peer (Receiver Mode) ───────────
+ipcMain.handle('transfer:download-from-remote', async (_event, remoteAddress: string, pin: string, targetDirectory?: string) => {
+  return await downloadBackupFromRemote(remoteAddress, pin, targetDirectory);
+});
+

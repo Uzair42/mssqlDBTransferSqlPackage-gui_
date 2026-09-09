@@ -5,18 +5,10 @@ import {
   WindowsSecurityIcon,
   SqlAuthIcon,
   WithMoveMappingIcon,
-  TrustCertIcon,
   StopProcessIcon,
   DatabaseScannerIcon,
-  DriverConnectorIcon,
-  SessionThreadIcon,
   FolderOpenIcon,
-  EyeIcon,
-  EyeOffIcon,
-  UserIcon,
-  LockIcon,
-  HashIcon,
-  ActivityPulseIcon,
+  HardDriveIcon,
   CheckCircleIcon,
   AlertTriangleIcon,
   LoaderIcon,
@@ -35,8 +27,8 @@ interface ConnectionFormProps {
   onExport: () => void;
   onCancel: () => void;
   onTestConnection: () => void;
-  onSelectSavePath: () => void;
-  onSelectBakFile: () => void;
+  onSelectSavePath?: () => void;
+  onSelectBakFile?: () => void;
   onFetchFileList: () => void;
   isRunning: boolean;
   isTesting: boolean;
@@ -46,10 +38,12 @@ interface ConnectionFormProps {
   fileMoves: FileMove[];
   onFileMoveChange: (moves: FileMove[]) => void;
   isFetchingFileList: boolean;
-  envInfo: EnvironmentInfo | null;
+  envInfo?: EnvironmentInfo | null;
   serverInfo: ServerVersionInfo | null;
   isGuideModeActive?: boolean;
   onOpenSchemaModal?: () => void;
+  onOpenAuthModal?: () => void;
+  onOpenFilesModal?: (databaseName?: string) => void;
 }
 
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({
@@ -58,8 +52,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   onExport,
   onCancel,
   onTestConnection,
-  onSelectSavePath,
-  onSelectBakFile,
   onFetchFileList,
   isRunning,
   isTesting,
@@ -69,26 +61,16 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   fileMoves,
   onFileMoveChange,
   isFetchingFileList,
-  envInfo,
   serverInfo,
   isGuideModeActive = true,
   onOpenSchemaModal,
+  onOpenAuthModal,
+  onOpenFilesModal,
 }) => {
-  const [showPassword, setShowPassword] = useState(false);
-  const [showFullVersion, setShowFullVersion] = useState(false);
-  const [specifyDomainUser, setSpecifyDomainUser] = useState(Boolean(config.domain || (config.authType === 'windows' && config.username)));
-
   // Dynamic Database Listing state
   const [databases, setDatabases] = useState<string[]>([]);
   const [isFetchingDbs, setIsFetchingDbs] = useState(false);
   const [isManualDbInput, setIsManualDbInput] = useState(false);
-
-  const handleAuthTypeChange = (type: 'sql' | 'windows') => {
-    onChange({
-      authType: type,
-      useCurrentWindowsUser: type === 'windows' && !specifyDomainUser,
-    });
-  };
 
   const handleFetchDatabases = useCallback(async () => {
     if (!window.electronAPI || !config.server) return;
@@ -106,7 +88,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           const ext = config.action === 'Backup' ? 'bak' : 'bacpac';
           onChange({
             database: defaultDb,
-            targetFile: `${defaultDb}_${new Date().toISOString().slice(0, 10)}.${ext}`,
+            targetFile: config.targetFile || `${defaultDb}_${new Date().toISOString().slice(0, 10)}.${ext}`,
           });
         }
       }
@@ -123,223 +105,246 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     }
   }, [testResult?.success, handleFetchDatabases]);
 
-  const isWindowsAuthSSPI = config.authType === 'windows' && !specifyDomainUser;
+  const isWindowsAuthSSPI = config.authType === 'windows' && !config.domain && !config.username;
 
   const isFormValid =
     config.server.trim() !== '' &&
     (config.action === 'Restore_Bak' || config.database.trim() !== '') &&
-    (isWindowsAuthSSPI ||
-      (config.authType === 'windows' && specifyDomainUser ? config.username.trim() !== '' : (config.username.trim() !== '' && config.password !== '')));
+    (config.authType === 'windows' ? true : (config.username.trim() !== '' && config.password !== ''));
 
   const isExport = config.action === 'Export';
   const isImport = config.action === 'Import';
   const isBackup = config.action === 'Backup';
   const isRestoreBak = config.action === 'Restore_Bak';
 
+  const isBacpacEngine = isExport || isImport;
+  const isBakEngine = isBackup || isRestoreBak;
+
+  const handleBrowseAction = async () => {
+    if (isRestoreBak || isImport) {
+      const file = await window.electronAPI?.selectOpenPath(
+        isImport ? 'Select Source .bacpac File to Import' : 'Select Source .bak File to Restore'
+      );
+      if (file) {
+        // Auto-extract database name if empty
+        const baseName = file.split(/[\\/]/).pop()?.replace(/\.(bacpac|bak|zip)$/i, '').replace(/_\d{4}-\d{2}-\d{2}.*$/, '') || '';
+        const updates: Partial<ConnectionConfig> = { targetFile: file };
+        if (!config.database && baseName) {
+          updates.database = baseName;
+        }
+        onChange(updates);
+      }
+    } else {
+      const defaultExt = isBackup ? 'bak' : 'bacpac';
+      const defaultName = config.database
+        ? `${config.database}_${new Date().toISOString().slice(0, 10)}.${defaultExt}`
+        : `DatabaseBackup_${new Date().toISOString().slice(0, 10)}.${defaultExt}`;
+      const savePath = await window.electronAPI?.selectSavePath(defaultName, defaultExt);
+      if (savePath) {
+        onChange({ targetFile: savePath });
+      }
+    }
+  };
+
   return (
     <div className="bg-theme-surface border border-theme-border rounded-2xl p-4 shadow-2xl space-y-3.5 flex flex-col justify-between h-full overflow-y-auto font-sans text-xs">
       <div className="space-y-3.5">
-        {/* CARD 1: 4 Operation Mode Tabs with Color-Coded Accents */}
-        <div data-tour-action-tabs="true" className="relative">
-          <div className="grid grid-cols-4 gap-1 p-1 bg-theme-bg border border-theme-border rounded-xl">
-            <button
-              type="button"
-              onClick={() => {
-                const defaultFile = config.database
-                  ? `${config.database}_${new Date().toISOString().slice(0, 10)}.bacpac`
-                  : '';
-                onChange({ action: 'Export', targetFile: defaultFile });
-              }}
-              className={`py-1.5 px-1 rounded-lg text-sm font-aladin transition flex items-center justify-center space-x-1 ${
-                isExport
-                  ? 'bg-[var(--theme-badge-export)] text-slate-950 font-extrabold shadow-md'
-                  : 'text-theme-muted hover:text-theme-text font-medium'
-              }`}
-            >
-              <BacpacIcon className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Export .bacpac</span>
-            </button>
+        
+        {/* ========================================================= */}
+        {/* DUAL ENGINE SELECTOR: SECTION 1 (.bacpac) & SECTION 2 (.bak) */}
+        {/* ========================================================= */}
+        <div data-tour-action-tabs="true" className="space-y-2 relative">
+          
+          {/* Section A: .bacpac DacFx Engine */}
+          <div className={`p-2.5 rounded-xl border transition-all ${
+            isBacpacEngine
+              ? 'bg-theme-card border-theme-accentPrimary/60 shadow-md ring-1 ring-theme-accentPrimary/30'
+              : 'bg-theme-bg/60 border-theme-border opacity-70 hover:opacity-100'
+          }`}>
+            <div className="flex items-center justify-between pb-1.5 border-b border-theme-border/60">
+              <div className="flex items-center space-x-2">
+                <BacpacIcon className="w-4 h-4 text-theme-accentPrimary" />
+                <span className="font-aladin text-sm font-bold text-theme-text uppercase tracking-wider">
+                  📦 .bacpac Migration Engine (DACPAC / BACPAC)
+                </span>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-theme-accentPrimary/20 text-theme-accentPrimary px-2 py-0.5 rounded border border-theme-accentPrimary/40">
+                Cross-Platform & Version Downgrade
+              </span>
+            </div>
 
-            <button
-              type="button"
-              onClick={() => onChange({ action: 'Import' })}
-              className={`py-1.5 px-1 rounded-lg text-sm font-aladin transition flex items-center justify-center space-x-1 ${
-                isImport
-                  ? 'bg-[var(--theme-badge-import)] text-slate-950 font-extrabold shadow-md'
-                  : 'text-theme-muted hover:text-theme-text font-medium'
-              }`}
-            >
-              <BacpacIcon className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Import .bacpac</span>
-            </button>
+            <p className="font-annie text-base text-theme-muted tracking-wide pt-1 pb-2">
+              Exports full schema & data into a portable, version-independent package. Perfect for moving between Linux ↔ Windows and cross-version migrations.
+            </p>
 
-            <button
-              type="button"
-              onClick={() => {
-                const defaultFile = config.database
-                  ? `${config.database}_${new Date().toISOString().slice(0, 10)}.bak`
-                  : '';
-                onChange({ action: 'Backup', targetFile: defaultFile });
-              }}
-              className={`py-1.5 px-1 rounded-lg text-sm font-aladin transition flex items-center justify-center space-x-1 ${
-                isBackup
-                  ? 'bg-[var(--theme-badge-backup)] text-slate-950 font-extrabold shadow-md'
-                  : 'text-theme-muted hover:text-theme-text font-medium'
-              }`}
-            >
-              <BakBackupIcon className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Backup .bak</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const defaultFile = config.database
+                    ? `${config.database}_${new Date().toISOString().slice(0, 10)}.bacpac`
+                    : '';
+                  onChange({ action: 'Export', targetFile: defaultFile });
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-aladin tracking-wider transition flex items-center justify-center space-x-1.5 shadow-sm ${
+                  isExport
+                    ? 'bg-[var(--theme-badge-export)] text-slate-950 font-extrabold ring-2 ring-white/20'
+                    : 'bg-theme-surface hover:bg-theme-card text-theme-text border border-theme-border font-medium'
+                }`}
+              >
+                <BacpacIcon className="w-3.5 h-3.5 shrink-0" />
+                <span>1. Export .bacpac (Schema + Data)</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onChange({ action: 'Restore_Bak' })}
-              className={`py-1.5 px-1 rounded-lg text-sm font-aladin transition flex items-center justify-center space-x-1 ${
-                isRestoreBak
-                  ? 'bg-[var(--theme-badge-restore)] text-slate-950 font-extrabold shadow-md'
-                  : 'text-theme-muted hover:text-theme-text font-medium'
-              }`}
-            >
-              <WithMoveMappingIcon className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Restore .bak</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onChange({ action: 'Import' })}
+                className={`py-2 px-2 rounded-xl text-xs font-aladin tracking-wider transition flex items-center justify-center space-x-1.5 shadow-sm ${
+                  isImport
+                    ? 'bg-[var(--theme-badge-import)] text-slate-950 font-extrabold ring-2 ring-white/20'
+                    : 'bg-theme-surface hover:bg-theme-card text-theme-text border border-theme-border font-medium'
+                }`}
+              >
+                <BacpacIcon className="w-3.5 h-3.5 shrink-0" />
+                <span>2. Import .bacpac (Restore DB)</span>
+              </button>
+            </div>
           </div>
 
-          <div className="absolute -top-1.5 -right-1.5">
+          {/* Section B: .bak Native SQL Server Engine */}
+          <div className={`p-2.5 rounded-xl border transition-all ${
+            isBakEngine
+              ? 'bg-theme-card border-theme-accentPrimary/60 shadow-md ring-1 ring-theme-accentPrimary/30'
+              : 'bg-theme-bg/60 border-theme-border opacity-70 hover:opacity-100'
+          }`}>
+            <div className="flex items-center justify-between pb-1.5 border-b border-theme-border/60">
+              <div className="flex items-center space-x-2">
+                <BakBackupIcon className="w-4 h-4 text-[var(--theme-badge-backup)]" />
+                <span className="font-aladin text-sm font-bold text-theme-text uppercase tracking-wider">
+                  💾 .bak Native SQL Server Engine (T-SQL Disk Engine)
+                </span>
+              </div>
+              <span className="text-[9px] font-mono font-bold bg-[var(--theme-badge-backup)]/20 text-[var(--theme-badge-backup)] px-2 py-0.5 rounded border border-[var(--theme-badge-backup)]/40">
+                High-Speed Binary Snapshot
+              </span>
+            </div>
+
+            <p className="font-annie text-base text-theme-muted tracking-wide pt-1 pb-2">
+              Executes instant server-side binary BACKUP and RESTORE with automatic WITH MOVE logical data (.mdf) & log (.ldf) relocation.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const defaultFile = config.database
+                    ? `${config.database}_${new Date().toISOString().slice(0, 10)}.bak`
+                    : '';
+                  onChange({ action: 'Backup', targetFile: defaultFile });
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-aladin tracking-wider transition flex items-center justify-center space-x-1.5 shadow-sm ${
+                  isBackup
+                    ? 'bg-[var(--theme-badge-backup)] text-slate-950 font-extrabold ring-2 ring-white/20'
+                    : 'bg-theme-surface hover:bg-theme-card text-theme-text border border-theme-border font-medium'
+                }`}
+              >
+                <BakBackupIcon className="w-3.5 h-3.5 shrink-0" />
+                <span>3. Backup .bak (Disk Snapshot)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onChange({ action: 'Restore_Bak' })}
+                className={`py-2 px-2 rounded-xl text-xs font-aladin tracking-wider transition flex items-center justify-center space-x-1.5 shadow-sm ${
+                  isRestoreBak
+                    ? 'bg-[var(--theme-badge-restore)] text-slate-950 font-extrabold ring-2 ring-white/20'
+                    : 'bg-theme-surface hover:bg-theme-card text-theme-text border border-theme-border font-medium'
+                }`}
+              >
+                <WithMoveMappingIcon className="w-3.5 h-3.5 shrink-0" />
+                <span>4. Restore .bak (WITH MOVE)</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="absolute -top-1 -right-1">
             <Hotspot
               isActive={isGuideModeActive}
-              title="Operation Mode"
-              description=".bacpac extracts schema + data for seamless version downgrades. .bak performs physical byte backups on the server."
-              tip="Use .bacpac if migrating from MSSQL 2022 to 2014/2016."
+              title="Dual Migration Engines"
+              description="Use .bacpac for schema+data version compatibility. Use .bak for high-speed direct disk backups."
+              tip="Both engines are fully supported on Linux and Windows."
               position="bottom"
             />
           </div>
         </div>
 
-        {/* Tab Description Callouts with Annie Font */}
-        {isBackup && (
-          <div className="p-2.5 bg-theme-card border-l-4 border-l-[var(--theme-badge-backup)] border-theme-border rounded-xl text-theme-text text-xs leading-relaxed flex items-start space-x-2">
-            <BakBackupIcon className="w-4 h-4 text-[var(--theme-badge-backup)] shrink-0 mt-0.5" />
-            <span className="font-annie text-base">
-              <strong>Native T-SQL BACKUP DATABASE:</strong> Creates a full binary `.bak` backup directly on the SQL Server host. Fast and preserves transaction log structure.
-            </span>
-          </div>
-        )}
-
-        {isRestoreBak && (
-          <div className="p-2.5 bg-theme-card border-l-4 border-l-[var(--theme-badge-restore)] border-theme-border rounded-xl text-theme-text text-xs leading-relaxed flex items-start space-x-2">
-            <WithMoveMappingIcon className="w-4 h-4 text-[var(--theme-badge-restore)] shrink-0 mt-0.5" />
-            <span className="font-annie text-base">
-              <strong>Native T-SQL RESTORE WITH MOVE:</strong> Reads logical names from `.bak` via `RESTORE FILELISTONLY` and automatically maps file paths to the target OS format (Linux `/var/opt/mssql/data` or Windows).
-            </span>
-          </div>
-        )}
-
-        {/* CARD 2: Server Telemetry Panel */}
-        {serverInfo ? (
-          <div className="p-3 bg-theme-card border border-theme-border rounded-xl space-y-2 shadow-lg animate-in fade-in duration-300">
-            <div className="flex items-center justify-between border-b border-theme-border/80 pb-1.5">
-              <div className="flex items-center space-x-2">
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
-                </span>
-                <span className="font-aladin text-base text-theme-text uppercase tracking-wider">
-                  Connected MSSQL & Active Session Driver
-                </span>
-              </div>
-              <span className="text-[10px] font-mono text-theme-accentPrimary bg-theme-bg px-2 py-0.5 rounded border border-theme-border flex items-center space-x-1">
-                <SessionThreadIcon className="w-3 h-3 inline" />
-                <span>SPID #{serverInfo.spid || 'Active'}</span>
+        {/* CARD 2: Server & Authentication Quick Bar */}
+        <div className="p-3 bg-theme-card border border-theme-border rounded-xl space-y-2 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <ServerHostIcon className="w-4 h-4 text-theme-accentPrimary" />
+              <span className="font-aladin text-sm font-bold text-theme-text uppercase tracking-wider">
+                Connection & Credentials
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-              <div className="bg-theme-bg p-2 rounded-lg border border-theme-border space-y-0.5">
-                <div className="text-amber-400 text-[9px] font-bold uppercase">Connected Database Engine</div>
-                <div className="text-theme-text font-bold text-[11px] truncate" title={serverInfo.friendlyVersion}>
-                  {serverInfo.friendlyVersion}
-                </div>
-                <div className="text-theme-muted text-[9px] truncate">
-                  Build {serverInfo.productVersion} ({serverInfo.productLevel || 'RTM'})
-                </div>
-              </div>
-
-              <div className="bg-theme-bg p-2 rounded-lg border border-theme-border space-y-0.5">
-                <div className="text-emerald-400 text-[9px] font-bold uppercase flex items-center space-x-1">
-                  <DriverConnectorIcon className="w-3 h-3 text-emerald-400" />
-                  <span>Active TDS Driver</span>
-                </div>
-                <div className="text-theme-text font-bold text-[11px] truncate">
-                  {serverInfo.activeDriver.split('(')[0].trim()}
-                </div>
-                <div className="text-theme-muted text-[9px] truncate" title={serverInfo.engineDriver}>
-                  Engine: {serverInfo.engineDriver.split('(')[0].trim()}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-[10px] text-theme-muted pt-1">
-              <span>Host: <strong className="text-theme-text font-mono">{serverInfo.machineName || config.server}:{config.port || '1433'}</strong></span>
+            {onOpenAuthModal && (
               <button
                 type="button"
-                onClick={() => setShowFullVersion(!showFullVersion)}
-                className="text-[10px] text-theme-accentPrimary hover:underline"
+                onClick={onOpenAuthModal}
+                className="px-2.5 py-1 bg-theme-surface hover:bg-theme-cardHover border border-theme-accentPrimary/50 text-theme-accentPrimary rounded-lg text-xs font-bold transition flex items-center space-x-1 shadow-2xs"
+                title="Configure host, port, SQL Auth & Windows SSPI"
               >
-                {showFullVersion ? 'Hide Details' : 'View Full @@VERSION'}
+                <span>⚙️ Auth Settings</span>
               </button>
-            </div>
-
-            {showFullVersion && (
-              <div className="mt-2 p-2 bg-theme-bg border border-theme-border rounded-lg text-[9px] font-mono text-theme-text whitespace-pre-wrap max-h-24 overflow-y-auto select-text leading-tight">
-                {serverInfo.fullVersion}
-              </div>
             )}
           </div>
-        ) : (
-          <div className="p-2.5 bg-theme-card/60 border border-theme-border rounded-xl space-y-2">
-            <div className="flex items-center justify-between border-b border-theme-border/80 pb-1">
-              <div className="flex items-center space-x-1.5">
-                <DriverConnectorIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />
-                <span className="font-aladin text-sm text-theme-text uppercase tracking-wider">
-                  Installed Engine & Driver Status (Pre-Connection)
-                </span>
-              </div>
-              <span className="text-[9px] font-mono text-emerald-400 bg-theme-bg px-1.5 py-0.5 rounded border border-theme-border">
-                Ready to Connect
+
+          {/* Connection Summary Pill */}
+          <div className="p-2 bg-theme-bg border border-theme-border rounded-lg flex items-center justify-between font-mono text-[11px] text-theme-text">
+            <div className="flex items-center space-x-2 truncate">
+              {config.authType === 'windows' ? (
+                <WindowsSecurityIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              ) : (
+                <SqlAuthIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              )}
+              <span className="font-semibold text-white truncate">
+                {config.authType === 'windows'
+                  ? isWindowsAuthSSPI
+                    ? 'Windows SSPI'
+                    : `Domain\\${config.username || 'User'}`
+                  : `${config.username || 'sa'}`}
+              </span>
+              <span className="text-theme-muted">@</span>
+              <span className="text-emerald-300 truncate font-bold">
+                {config.server || 'localhost'}:{config.port || '1433'}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
-              <div className="bg-theme-bg p-2 rounded-lg border border-theme-border space-y-0.5">
-                <div className="text-amber-400 text-[9px] font-bold uppercase flex items-center space-x-1">
-                  <BakBackupIcon className="w-3 h-3 text-amber-400" />
-                  <span>Local MSSQL Engine</span>
-                </div>
-                <div className="text-theme-text font-semibold truncate" title={envInfo?.localMssqlVersion || 'Not installed'}>
-                  {envInfo?.localMssqlInstalled
-                    ? (envInfo.localMssqlFriendly || `v${envInfo.localMssqlVersion}`)
-                    : 'Not installed locally'}
-                </div>
-                <div className="text-[9px] text-theme-muted">
-                  {envInfo?.localMssqlInstalled
-                    ? `Status: ${envInfo.localMssqlStatus === 'active' ? '● Service Active' : '○ Inactive'}`
-                    : 'Targeting remote host'}
-                </div>
-              </div>
+            <button
+              type="button"
+              onClick={onTestConnection}
+              disabled={isTesting || !config.server}
+              className="text-[10px] text-theme-accentPrimary hover:underline flex items-center space-x-1 shrink-0 ml-2 font-bold"
+            >
+              <RefreshIcon className={`w-3 h-3 ${isTesting ? 'animate-spin' : ''}`} />
+              <span>{isTesting ? 'Testing...' : 'Test'}</span>
+            </button>
+          </div>
+        </div>
 
-              <div className="bg-theme-bg p-2 rounded-lg border border-theme-border space-y-0.5">
-                <div className="text-emerald-400 text-[9px] font-bold uppercase flex items-center space-x-1">
-                  <DriverConnectorIcon className="w-3 h-3 text-emerald-400" />
-                  <span>Active Driver (In Use)</span>
-                </div>
-                <div className="text-theme-text font-semibold truncate">
-                  Tedious v20.0 (TDS 7.4)
-                </div>
-                <div className="text-[9px] text-theme-muted truncate" title={envInfo?.sqlpackageVersion || 'SqlPackage CLI'}>
-                  {envInfo?.sqlpackageVersion || 'SqlPackage v170.4 (DacFx)'}
-                </div>
+        {/* Server Telemetry Badge */}
+        {serverInfo && (
+          <div className="p-2.5 bg-theme-card/60 border border-theme-border rounded-xl space-y-1 text-[10px] font-mono animate-in fade-in duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-1.5 text-emerald-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Connected: {serverInfo.friendlyVersion}</span>
               </div>
+              <span className="text-theme-muted">SPID #{serverInfo.spid || 'Active'}</span>
+            </div>
+            <div className="text-theme-muted truncate">
+              Driver: {serverInfo.activeDriver.split('(')[0].trim()} | Machine: {serverInfo.machineName || config.server}
             </div>
           </div>
         )}
@@ -347,15 +352,15 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         {/* Test Result Banner */}
         {testResult && (
           <div
-            className={`p-2.5 rounded-xl border space-y-1 relative ${
+            className={`p-2.5 rounded-xl border space-y-1 relative animate-in fade-in duration-150 ${
               testResult.success
-                ? 'bg-theme-card border-emerald-500 text-emerald-300'
-                : 'bg-theme-card border-red-500 text-red-300'
+                ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                : 'bg-red-950/30 border-red-500/40 text-red-300'
             }`}
           >
             <button
               onClick={onDismissTestResult}
-              className="absolute right-2 top-2 p-1 rounded text-theme-muted hover:text-theme-text"
+              className="absolute right-2 top-2 p-1 rounded text-theme-muted hover:text-white"
             >
               <CloseIcon className="w-3.5 h-3.5" />
             </button>
@@ -368,255 +373,17 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               <span className="text-base">{testResult.message}</span>
             </div>
             {testResult.details && (
-              <p className="text-[10px] font-mono text-theme-text whitespace-pre-wrap pl-6">
+              <p className="text-[10px] font-mono text-theme-text whitespace-pre-wrap pl-6 leading-tight">
                 {testResult.details}
               </p>
             )}
           </div>
         )}
 
-        {/* CARD 3: Server & Authentication Section */}
-        <div data-tour-server-auth="true" className="space-y-2.5 border border-theme-border rounded-xl p-3.5 bg-theme-card relative">
-          <div className="flex items-center justify-between border-b border-theme-border pb-1.5">
-            <div className="flex items-center space-x-2">
-              <ServerHostIcon className="w-4 h-4 text-theme-accentPrimary" />
-              <h2 className="font-aladin text-base font-bold text-theme-text uppercase tracking-wider">
-                {isExport
-                  ? 'Export Source Server'
-                  : isImport
-                  ? 'Target Restore Server'
-                  : isBackup
-                  ? 'MSSQL Backup Source'
-                  : 'MSSQL Restore Target'}
-              </h2>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="text-[10px] font-mono text-theme-muted">
-                {isBackup || isRestoreBak ? 'T-SQL Engine' : 'sqlpackage Engine'}
-              </span>
-              <Hotspot
-                isActive={isGuideModeActive}
-                title="Server Connection"
-                description="Supports local instances, remote hosts, Azure SQL, and Docker container ports."
-                position="left"
-              />
-            </div>
-          </div>
-
-          {/* Server Host & Port */}
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2 space-y-1">
-              <label className="block text-[11px] font-medium text-theme-text">
-                Server Host / IP <span className="text-emerald-400">*</span>
-              </label>
-              <input
-                type="text"
-                value={config.server}
-                onChange={(e) => onChange({ server: e.target.value })}
-                placeholder="localhost or 192.168.1.10"
-                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[11px] font-medium text-theme-text flex items-center space-x-1">
-                <HashIcon className="w-3 h-3 text-theme-muted" />
-                <span>Port</span>
-              </label>
-              <input
-                type="text"
-                value={config.port}
-                onChange={(e) => onChange({ port: e.target.value })}
-                placeholder="1433"
-                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
-              />
-            </div>
-          </div>
-
-          {/* Auth Mode Tabs */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label className="block text-[11px] font-medium text-theme-text">
-                Authentication Mode
-              </label>
-            </div>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-theme-bg border border-theme-border rounded-lg">
-              <button
-                type="button"
-                onClick={() => handleAuthTypeChange('sql')}
-                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold transition flex items-center justify-center space-x-1.5 ${
-                  config.authType === 'sql'
-                    ? 'bg-theme-card text-theme-accentPrimary font-bold border border-theme-accentPrimary/50 shadow-sm'
-                    : 'text-theme-muted hover:text-theme-text font-medium'
-                }`}
-              >
-                <SqlAuthIcon className="w-3.5 h-3.5" />
-                <span>SQL Server Auth</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAuthTypeChange('windows')}
-                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold transition flex items-center justify-center space-x-1.5 ${
-                  config.authType === 'windows'
-                    ? 'bg-theme-card text-theme-accentPrimary font-bold border border-theme-accentPrimary/50 shadow-sm'
-                    : 'text-theme-muted hover:text-theme-text font-medium'
-                }`}
-              >
-                <WindowsSecurityIcon className="w-3.5 h-3.5" />
-                <span>Windows Auth (SSPI)</span>
-              </button>
-            </div>
-          </div>
-
-          {/* SQL Server Auth Inputs */}
-          {config.authType === 'sql' && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="block text-[11px] font-medium text-theme-text flex items-center space-x-1">
-                  <UserIcon className="w-3 h-3 text-theme-muted" />
-                  <span>Username</span> <span className="text-emerald-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={config.username}
-                  onChange={(e) => onChange({ username: e.target.value })}
-                  placeholder="sa"
-                  className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="block text-[11px] font-medium text-theme-text flex items-center space-x-1">
-                  <LockIcon className="w-3 h-3 text-theme-muted" />
-                  <span>Password</span> <span className="text-emerald-400">*</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={config.password}
-                    onChange={(e) => onChange({ password: e.target.value })}
-                    placeholder="••••••••"
-                    className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg pl-2.5 pr-7 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-2 top-2 text-theme-muted hover:text-theme-text"
-                  >
-                    {showPassword ? <EyeOffIcon className="w-3.5 h-3.5" /> : <EyeIcon className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Windows Auth Options */}
-          {config.authType === 'windows' && (
-            <div className="space-y-2 p-2.5 bg-theme-bg border border-theme-border rounded-lg text-theme-text">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <WindowsSecurityIcon className="w-4 h-4 text-theme-accentPrimary shrink-0" />
-                  <span className="font-semibold text-theme-text">
-                    {specifyDomainUser ? 'Domain / NTLM User' : 'Windows Integrated Security (SSPI)'}
-                  </span>
-                </div>
-                <label className="flex items-center space-x-1.5 text-[10px] text-theme-muted cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={specifyDomainUser}
-                    onChange={(e) => {
-                      setSpecifyDomainUser(e.target.checked);
-                      onChange({
-                        useCurrentWindowsUser: !e.target.checked,
-                        domain: e.target.checked ? (config.domain || '') : undefined,
-                      });
-                    }}
-                    className="rounded bg-theme-card border-theme-border text-theme-accentPrimary focus:ring-0"
-                  />
-                  <span>Specify Domain User</span>
-                </label>
-              </div>
-
-              {!specifyDomainUser ? (
-                <p className="font-annie text-base text-theme-muted leading-snug">
-                  Automatically uses current Windows SSPI credentials with zero password hassle.
-                </p>
-              ) : (
-                <div className="grid grid-cols-3 gap-2 pt-1">
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] text-theme-muted">Domain</label>
-                    <input
-                      type="text"
-                      value={config.domain || ''}
-                      onChange={(e) => onChange({ domain: e.target.value })}
-                      placeholder="MYDOMAIN"
-                      className="w-full bg-theme-card border border-theme-border focus:border-theme-accentPrimary rounded px-2 py-1 text-xs text-theme-text font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] text-theme-muted">Username *</label>
-                    <input
-                      type="text"
-                      value={config.username}
-                      onChange={(e) => onChange({ username: e.target.value })}
-                      placeholder="john.doe"
-                      className="w-full bg-theme-card border border-theme-border focus:border-theme-accentPrimary rounded px-2 py-1 text-xs text-theme-text font-mono focus:outline-none"
-                    />
-                  </div>
-                  <div className="space-y-0.5">
-                    <label className="text-[10px] text-theme-muted">Password</label>
-                    <input
-                      type="password"
-                      value={config.password}
-                      onChange={(e) => onChange({ password: e.target.value })}
-                      placeholder="••••••••"
-                      className="w-full bg-theme-card border border-theme-border focus:border-theme-accentPrimary rounded px-2 py-1 text-xs text-theme-text font-mono focus:outline-none"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Trust Server Certificate Checkbox */}
-          <div className="flex items-center justify-between pt-1">
-            <label className="flex items-center space-x-2 text-[11px] text-theme-text cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={config.trustServerCertificate}
-                onChange={(e) => onChange({ trustServerCertificate: e.target.checked })}
-                className="rounded bg-theme-bg border-theme-border text-theme-accentPrimary focus:ring-0"
-              />
-              <TrustCertIcon className="w-3.5 h-3.5 text-theme-accentPrimary inline shrink-0" />
-              <span>Trust Server Certificate (SSL Bypassing)</span>
-            </label>
-          </div>
-
-          {/* Test Connection Button inside Card 3 */}
-          <div className="pt-2">
-            <button
-              type="button"
-              disabled={!config.server || isTesting || isRunning}
-              onClick={onTestConnection}
-              className="w-full py-2 px-3 rounded-xl text-xs font-semibold border bg-theme-bg hover:bg-theme-cardHover border-theme-border text-theme-text transition flex items-center justify-center space-x-2 shadow-sm hover:border-theme-accentPrimary/50"
-            >
-              {isTesting ? (
-                <>
-                  <LoaderIcon className="w-3.5 h-3.5 animate-spin text-theme-accentPrimary" />
-                  <span>Testing Connection & Fetching Telemetry...</span>
-                </>
-              ) : (
-                <>
-                  <ActivityPulseIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />
-                  <span>Test Connection & Fetch Databases</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* CARD 4: Database & Target File Selection */}
-        <div data-tour-db-select="true" className="space-y-2 border border-theme-border rounded-xl p-3.5 bg-theme-card relative">
+        {/* CARD 3: Database & File Target Section */}
+        <div data-tour-db-select="true" className="space-y-2.5 border border-theme-border rounded-xl p-3.5 bg-theme-card relative">
+          
+          {/* Database Selector with Physical Files Inspector */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="block text-[11px] font-medium text-theme-text flex items-center space-x-1.5">
@@ -625,26 +392,29 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 <span className="text-emerald-400">*</span>
               </label>
 
-              {!isRestoreBak && (
-                <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={handleFetchDatabases}
-                    disabled={isFetchingDbs || !config.server}
-                    className="text-[10px] text-theme-accentPrimary hover:underline flex items-center space-x-1 disabled:opacity-50"
-                  >
-                    <RefreshIcon className={`w-3 h-3 ${isFetchingDbs ? 'animate-spin' : ''}`} />
-                    <span>{isFetchingDbs ? 'Fetching...' : 'Fetch DBs'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsManualDbInput(!isManualDbInput)}
-                    className="text-[10px] text-theme-muted hover:text-theme-text"
-                  >
-                    {isManualDbInput ? <ListIcon className="w-3 h-3" /> : <EditIcon className="w-3 h-3" />}
-                  </button>
-                </div>
-              )}
+              <div className="flex items-center space-x-2">
+                {!isRestoreBak && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleFetchDatabases}
+                      disabled={isFetchingDbs || !config.server}
+                      className="text-[10px] text-theme-accentPrimary hover:underline flex items-center space-x-1 disabled:opacity-50 font-mono"
+                    >
+                      <RefreshIcon className={`w-3 h-3 ${isFetchingDbs ? 'animate-spin' : ''}`} />
+                      <span>{isFetchingDbs ? 'Fetching...' : 'Fetch DBs'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsManualDbInput(!isManualDbInput)}
+                      className="text-[10px] text-theme-muted hover:text-theme-text"
+                      title={isManualDbInput ? 'Switch to Dropdown' : 'Manual Name Input'}
+                    >
+                      {isManualDbInput ? <ListIcon className="w-3 h-3" /> : <EditIcon className="w-3 h-3" />}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {!isRestoreBak && !isManualDbInput && databases.length > 0 ? (
@@ -658,7 +428,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     targetFile: config.targetFile || `${selectedDb}_${new Date().toISOString().slice(0, 10)}.${ext}`,
                   });
                 }}
-                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text focus:outline-none font-mono"
+                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-xl px-3 py-2 text-xs text-theme-text focus:outline-none font-mono"
               >
                 {databases.map((db: string) => (
                   <option key={db} value={db}>{db}</option>
@@ -669,25 +439,42 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 type="text"
                 value={config.database}
                 onChange={(e) => onChange({ database: e.target.value })}
-                placeholder={isRestoreBak ? 'e.g. Hospital_Restored' : 'e.g. dummy_hospital'}
-                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
+                placeholder={isRestoreBak ? 'e.g. MyDatabase_Restored' : 'e.g. CompanyForm'}
+                className="w-full bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-xl px-3 py-2 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono"
               />
             )}
 
-            {onOpenSchemaModal && config.database && (
-              <button
-                type="button"
-                onClick={onOpenSchemaModal}
-                className="w-full py-1.5 px-3 bg-theme-bg hover:bg-theme-cardHover text-theme-accentPrimary border border-theme-accentPrimary/40 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition shadow-2xs hover:border-theme-accentPrimary"
-                title="Inspect tables, columns, constraints & sample data rows"
-              >
-                <DatabaseScannerIcon className="w-3.5 h-3.5" />
-                <span>🔍 Explore Database Schema & Data</span>
-              </button>
+            {/* Inspect Physical Files & Schema Visualizer Bar */}
+            {config.database && (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                {onOpenFilesModal && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenFilesModal(config.database)}
+                    className="py-1.5 px-2 bg-theme-bg hover:bg-theme-surface text-theme-text border border-theme-border rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition shadow-2xs hover:border-theme-accentPrimary"
+                    title="Inspect .mdf (Data File) & .ldf (Log File) disk locations"
+                  >
+                    <HardDriveIcon className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>📁 Storage Files (.mdf/.ldf)</span>
+                  </button>
+                )}
+
+                {onOpenSchemaModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenSchemaModal}
+                    className="py-1.5 px-2 bg-theme-bg hover:bg-theme-surface text-theme-accentPrimary border border-theme-accentPrimary/40 rounded-lg text-[11px] font-semibold flex items-center justify-center space-x-1.5 transition shadow-2xs hover:border-theme-accentPrimary"
+                    title="Inspect tables, columns, foreign keys & interactive ERD"
+                  >
+                    <DatabaseScannerIcon className="w-3.5 h-3.5" />
+                    <span>📊 Schema & ERD</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
-          {/* File Location */}
+          {/* Backup / Target File Location */}
           <div className="space-y-1">
             <label className="block text-[11px] font-medium text-theme-text">
               {isBackup
@@ -706,16 +493,16 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 value={config.targetFile}
                 onChange={(e) => onChange({ targetFile: e.target.value })}
                 placeholder={
-                  isRestoreBak
-                    ? 'Click Browse to select .bak file...'
-                    : 'File path destination...'
+                  isRestoreBak || isImport
+                    ? 'Click Browse to select backup file (.bacpac or .bak)...'
+                    : 'Destination file path...'
                 }
-                className="flex-1 bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-lg px-2.5 py-1.5 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono truncate"
+                className="flex-1 bg-theme-bg border border-theme-border focus:border-theme-accentPrimary rounded-xl px-3 py-2 text-xs text-theme-text placeholder-theme-muted focus:outline-none font-mono truncate"
               />
               <button
                 type="button"
-                onClick={isRestoreBak || isImport ? onSelectBakFile : onSelectSavePath}
-                className="px-3 py-1.5 bg-theme-bg hover:bg-theme-border text-theme-text rounded-lg border border-theme-border text-xs font-medium flex items-center space-x-1 shrink-0"
+                onClick={handleBrowseAction}
+                className="px-3.5 py-2 bg-theme-bg hover:bg-theme-surface text-theme-text rounded-xl border border-theme-border text-xs font-semibold flex items-center space-x-1.5 shrink-0 transition"
               >
                 <FolderOpenIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />
                 <span>Browse</span>
@@ -786,7 +573,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         )}
       </div>
 
-      {/* CARD 5: Primary Action Launch Control Bar */}
+      {/* Primary Action Launch Control Bar */}
       <div data-tour-run-button="true" className="pt-2 border-t border-theme-border space-y-2">
         {!isRunning ? (
           <button

@@ -409,7 +409,9 @@ export function buildSqlpackageArgs(config: ExportConfig): string[] {
       args.push('/TargetTrustServerCertificate:True');
     }
 
-    // IMPORT-VALID PROPERTIES: Storage, CommandTimeout
+    // IMPORT-VALID PROPERTIES: Storage, CommandTimeout, AllowIncompatiblePlatform
+    args.push('/p:AllowIncompatiblePlatform=True');
+
     if (config.compatibilityMode === 'legacy_downgrade' || config.compatibilityMode === 'custom') {
       args.push(`/p:Storage=${storageOption}`);
       args.push('/p:CommandTimeout=0');

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Header, ThemeType } from './components/Header';
+import { Header } from './components/Header';
 import { ConnectionForm } from './components/ConnectionForm';
 import { LogConsole } from './components/LogConsole';
 import { DependencyModal } from './components/DependencyModal';
@@ -8,6 +8,10 @@ import { ProductTourModal } from './components/ProductTourModal';
 import { InteractiveWalkthrough } from './components/InteractiveWalkthrough';
 import { FileTransferModal } from './components/FileTransferModal';
 import { SchemaViewerModal } from './components/SchemaViewerModal';
+import { AuthSettingsModal } from './components/AuthSettingsModal';
+import { DatabaseFilesModal } from './components/DatabaseFilesModal';
+import { PostOperationModal } from './components/PostOperationModal';
+import { AppearanceModal } from './components/AppearanceModal';
 import {
   ConnectionConfig,
   ConnectionTestResult,
@@ -18,25 +22,67 @@ import {
   FileMove,
   EnvironmentInfo,
   ServerVersionInfo,
+  ThemeType,
+  TypographyType,
+  FontSizeScale,
+  AppearanceSettings,
 } from './types';
 
 export function App() {
-  const [currentTheme, setCurrentTheme] = useState<ThemeType>(() => {
-    const saved = (localStorage.getItem('mssql_migrator_theme') || localStorage.getItem('nano_bana_theme')) as ThemeType;
-    return saved || 'theme-lime-coral';
+  const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings>(() => {
+    const savedTheme = (localStorage.getItem('mssql_migrator_theme') || 'theme-pure-black') as ThemeType;
+    const savedTypography = (localStorage.getItem('mssql_migrator_typography') || 'font-jakarta') as TypographyType;
+    const savedFontSize = (localStorage.getItem('mssql_migrator_font_size') || 'scale-normal') as FontSizeScale;
+    return {
+      theme: savedTheme,
+      typography: savedTypography,
+      fontSize: savedFontSize,
+    };
   });
 
-  const handleThemeChange = (newTheme: ThemeType) => {
-    setCurrentTheme(newTheme);
-    localStorage.setItem('mssql_migrator_theme', newTheme);
+  const handleUpdateAppearance = (newSettings: Partial<AppearanceSettings>) => {
+    setAppearanceSettings((prev) => {
+      const updated = { ...prev, ...newSettings };
+      if (newSettings.theme) localStorage.setItem('mssql_migrator_theme', newSettings.theme);
+      if (newSettings.typography) localStorage.setItem('mssql_migrator_typography', newSettings.typography);
+      if (newSettings.fontSize) localStorage.setItem('mssql_migrator_font_size', newSettings.fontSize);
+      return updated;
+    });
   };
 
+  const handleResetAppearance = () => {
+    const defaults: AppearanceSettings = {
+      theme: 'theme-pure-black',
+      typography: 'font-jakarta',
+      fontSize: 'scale-normal',
+    };
+    setAppearanceSettings(defaults);
+    localStorage.setItem('mssql_migrator_theme', defaults.theme);
+    localStorage.setItem('mssql_migrator_typography', defaults.typography);
+    localStorage.setItem('mssql_migrator_font_size', defaults.fontSize);
+  };
+
+  const [isAppearanceModalOpen, setIsAppearanceModalOpen] = useState(false);
   const [engineStatus, setEngineStatus] = useState<SqlpackageStatus | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [isDownloadingModalOpen, setIsDownloadingModalOpen] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
+  const [filesModalDb, setFilesModalDb] = useState<string>('');
   const [lastCreatedBackupPath, setLastCreatedBackupPath] = useState<string>('');
+
+  const [postOpModal, setPostOpModal] = useState<{
+    isOpen: boolean;
+    type: 'restore' | 'backup';
+    databaseName: string;
+    filePath?: string;
+  }>({
+    isOpen: false,
+    type: 'restore',
+    databaseName: '',
+  });
 
   const [envInfo, setEnvInfo] = useState<EnvironmentInfo | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerVersionInfo | null>(null);
@@ -154,41 +200,67 @@ export function App() {
 
     let unsubProgress: (() => void) | undefined;
     if (typeof window.electronAPI.onDownloadProgress === 'function') {
-      unsubProgress = window.electronAPI.onDownloadProgress((p: DownloadProgress) => {
-        setDownloadProgress(p);
-        if (p.status === 'completed') {
-          setTimeout(() => setIsDownloadingModalOpen(false), 1200);
+      unsubProgress = window.electronAPI.onDownloadProgress((prog) => {
+        setDownloadProgress({
+          status: prog.status as any,
+          percent: prog.percent,
+          message: prog.message,
+        });
+        if (prog.status === 'completed') {
+          checkStatus();
         }
       });
     }
 
     return () => {
-      if (typeof unsubLog === 'function') unsubLog();
-      if (typeof unsubProgress === 'function') unsubProgress();
+      if (unsubLog) unsubLog();
+      if (unsubProgress) unsubProgress();
     };
   }, [checkStatus, fetchEnvInfo]);
 
   const handleConfigChange = (updated: Partial<ConnectionConfig>) => {
-    setConfig((prev) => ({ ...prev, ...updated }));
+    setConfig((prev) => {
+      const next = { ...prev, ...updated };
+
+      if (updated.database !== undefined && updated.database !== prev.database) {
+        const ext = next.action === 'Backup' ? 'bak' : 'bacpac';
+        if (next.action === 'Export' || next.action === 'Backup') {
+          next.targetFile = updated.database
+            ? `${updated.database}_${new Date().toISOString().slice(0, 10)}.${ext}`
+            : '';
+        }
+      }
+
+      if (updated.action !== undefined && updated.action !== prev.action) {
+        const isBak = updated.action === 'Backup' || updated.action === 'Restore_Bak';
+        const ext = isBak ? 'bak' : 'bacpac';
+
+        if (updated.action === 'Restore_Bak' || updated.action === 'Import') {
+          next.targetFile = '';
+        } else if (next.database) {
+          next.targetFile = `${next.database}_${new Date().toISOString().slice(0, 10)}.${ext}`;
+        }
+      }
+
+      return next;
+    });
   };
 
   const handleTestConnection = async () => {
     if (!window.electronAPI) return;
     setIsTestingConnection(true);
     setTestResult(null);
-    setServerInfo(null);
-
     try {
       const res = await window.electronAPI.testConnection(config);
       setTestResult(res);
-
-      if (res.success && res.serverInfo) {
+      if (res.serverInfo) {
         setServerInfo(res.serverInfo);
       }
     } catch (err) {
       setTestResult({
         success: false,
-        message: `Connection error: ${(err as Error).message}`,
+        message: 'Connection Test Failed',
+        details: (err as Error).message,
       });
     } finally {
       setIsTestingConnection(false);
@@ -197,34 +269,40 @@ export function App() {
 
   const handleSelectSavePath = async () => {
     if (!window.electronAPI) return;
-    const isBak = config.action === 'Backup';
+    const defaultExt = config.action === 'Backup' ? 'bak' : 'bacpac';
     const defaultName = config.database
-      ? `${config.database}_${new Date().toISOString().slice(0, 10)}.${isBak ? 'bak' : 'bacpac'}`
-      : `export_${new Date().toISOString().slice(0, 10)}.${isBak ? 'bak' : 'bacpac'}`;
-    const file = await window.electronAPI.selectSavePath(defaultName);
-    if (file) {
-      setConfig((prev) => ({ ...prev, targetFile: file }));
+      ? `${config.database}_${new Date().toISOString().slice(0, 10)}.${defaultExt}`
+      : `DatabaseBackup_${new Date().toISOString().slice(0, 10)}.${defaultExt}`;
+
+    const path = await window.electronAPI.selectSavePath(defaultName, defaultExt);
+    if (path) {
+      setConfig((prev) => ({ ...prev, targetFile: path }));
     }
   };
 
   const handleSelectBakFile = async () => {
     if (!window.electronAPI) return;
-    const title = config.action === 'Import' ? 'Select .bacpac Archive File' : 'Select .bak Backup File';
-    const filterExt = config.action === 'Import' ? 'bacpac' : 'bak';
-    const file = await window.electronAPI.selectOpenPath(title, filterExt);
-    if (file) {
-      setConfig((prev) => ({ ...prev, targetFile: file }));
+    const path = await window.electronAPI.selectOpenPath(
+      config.action === 'Import' ? 'Select .bacpac Archive' : 'Select .bak Backup File'
+    );
+    if (path) {
+      const baseName = path.split(/[\\/]/).pop()?.replace(/\.(bacpac|bak|zip)$/i, '').replace(/_\d{4}-\d{2}-\d{2}.*$/, '') || '';
+      setConfig((prev) => ({
+        ...prev,
+        targetFile: path,
+        database: prev.database || baseName,
+      }));
+
       if (config.action === 'Restore_Bak') {
-        handleFetchFileList(file);
+        handleFetchFileList(path);
       }
     }
   };
 
-  const handleFetchFileList = async (overrideBakPath?: string) => {
-    const target = overrideBakPath || config.targetFile;
+  const handleFetchFileList = async (filePathToRead?: string) => {
+    const target = filePathToRead || config.targetFile;
     if (!window.electronAPI || !target) return;
     setIsFetchingFileList(true);
-
     try {
       const res = await window.electronAPI.fetchBakFileList(config, target);
       if (res.success && res.files) {
@@ -265,13 +343,22 @@ export function App() {
     try {
       const result = await window.electronAPI.runSqlpackage(config, fileMoves);
       if (result.success) {
+        const isRestoreAction = config.action === 'Restore_Bak' || config.action === 'Import';
         setBannerStatus({
           type: 'success',
-          message: `${config.action} operation completed successfully! Output saved to: ${config.targetFile}`,
+          message: `${config.action} operation completed successfully! Output: ${config.targetFile || config.database}`,
         });
         if (config.action === 'Backup' || config.action === 'Export') {
           setLastCreatedBackupPath(config.targetFile);
         }
+
+        // Open Post-Operation Smart Action Modal
+        setPostOpModal({
+          isOpen: true,
+          type: isRestoreAction ? 'restore' : 'backup',
+          databaseName: config.database || 'Database',
+          filePath: config.targetFile,
+        });
       } else {
         setBannerStatus({
           type: 'error',
@@ -298,8 +385,33 @@ export function App() {
     });
   };
 
+  const handleRestoreTransferredFile = (downloadedPath: string) => {
+    const isBak = downloadedPath.toLowerCase().endsWith('.bak');
+    const baseName = downloadedPath.split(/[\\/]/).pop()?.replace(/\.(bacpac|bak|zip)$/i, '').replace(/_\d{4}-\d{2}-\d{2}.*$/, '') || '';
+    setConfig((prev) => ({
+      ...prev,
+      action: isBak ? 'Restore_Bak' : 'Import',
+      targetFile: downloadedPath,
+      database: baseName || prev.database,
+    }));
+    setIsTransferModalOpen(false);
+    setBannerStatus({
+      type: 'success',
+      message: `Transferred backup file loaded: ${downloadedPath}. Ready to execute restore.`,
+    });
+    if (isBak) {
+      handleFetchFileList(downloadedPath);
+    }
+  };
+
   return (
-    <div className={`h-screen flex flex-col bg-theme-bg text-theme-text overflow-hidden font-sans relative ${currentTheme}`}>
+    <div
+      className={`h-screen flex flex-col bg-theme-bg text-theme-text overflow-hidden relative transition-colors duration-200 ${appearanceSettings.theme} ${appearanceSettings.typography} ${appearanceSettings.fontSize}`}
+      style={{
+        backgroundColor: 'var(--theme-bg)',
+        color: 'var(--theme-text)',
+      }}
+    >
       <Header
         status={engineStatus}
         onRedownload={triggerDownload}
@@ -314,8 +426,9 @@ export function App() {
         onToggleGuideMode={() => setIsGuideModeActive(!isGuideModeActive)}
         onOpenTransferModal={() => setIsTransferModalOpen(true)}
         onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
-        currentTheme={currentTheme}
-        onThemeChange={handleThemeChange}
+        onOpenAppearanceModal={() => setIsAppearanceModalOpen(true)}
+        currentTheme={appearanceSettings.theme}
+        onThemeChange={(theme) => handleUpdateAppearance({ theme })}
       />
 
       <main className="flex-1 p-5 grid grid-cols-12 gap-5 min-h-0">
@@ -345,6 +458,11 @@ export function App() {
               serverInfo={serverInfo}
               isGuideModeActive={isGuideModeActive}
               onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
+              onOpenAuthModal={() => setIsAuthModalOpen(true)}
+              onOpenFilesModal={(db) => {
+                setFilesModalDb(db || config.database);
+                setIsFilesModalOpen(true);
+              }}
             />
           </div>
         </div>
@@ -353,6 +471,14 @@ export function App() {
           <LogConsole logs={logs} onClear={() => setLogs([])} isRunning={isRunning} />
         </div>
       </main>
+
+      <AppearanceModal
+        isOpen={isAppearanceModalOpen}
+        onClose={() => setIsAppearanceModalOpen(false)}
+        settings={appearanceSettings}
+        onUpdateSettings={handleUpdateAppearance}
+        onResetDefaults={handleResetAppearance}
+      />
 
       <DependencyModal
         isOpen={isDownloadingModalOpen}
@@ -374,12 +500,48 @@ export function App() {
         isOpen={isTransferModalOpen}
         onClose={() => setIsTransferModalOpen(false)}
         defaultFilePath={lastCreatedBackupPath || config.targetFile}
+        onRestoreTransferredFile={handleRestoreTransferredFile}
       />
 
       <SchemaViewerModal
         isOpen={isSchemaModalOpen}
         onClose={() => setIsSchemaModalOpen(false)}
         config={config}
+      />
+
+      <AuthSettingsModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        config={config}
+        onChange={handleConfigChange}
+        onTestConnection={handleTestConnection}
+        isTesting={isTestingConnection}
+        testResult={testResult}
+        onDismissTestResult={() => setTestResult(null)}
+      />
+
+      <DatabaseFilesModal
+        isOpen={isFilesModalOpen}
+        onClose={() => setIsFilesModalOpen(false)}
+        config={config}
+        databaseName={filesModalDb || config.database}
+      />
+
+      <PostOperationModal
+        isOpen={postOpModal.isOpen}
+        onClose={() => setPostOpModal((prev) => ({ ...prev, isOpen: false }))}
+        operationType={postOpModal.type}
+        databaseName={postOpModal.databaseName}
+        filePath={postOpModal.filePath}
+        onOpenSchemaModal={() => setIsSchemaModalOpen(true)}
+        onOpenFileTransfer={(file) => {
+          setLastCreatedBackupPath(file);
+          setIsTransferModalOpen(true);
+        }}
+        onOpenFilesModal={() => {
+          setFilesModalDb(postOpModal.databaseName);
+          setIsFilesModalOpen(true);
+        }}
       />
 
       <InteractiveWalkthrough

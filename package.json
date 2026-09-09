@@ -1,6 +1,6 @@
 {
   "name": "sqlpackage-gui",
-  "version": "1.9.1",
+  "version": "1.9.8",
   "description": "Cross-Platform MSSQL BACPAC Export Desktop App",
   "main": "dist-electron/main.js",
   "repository": {
@@ -26,11 +26,14 @@
       }
     ],
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "icon": "build/icon.png",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "public/**/*",
       "package.json"
     ],
     "linux": {
@@ -39,16 +42,21 @@
         "deb"
       ],
       "category": "Development",
-      "maintainer": "Uzair"
+      "maintainer": "Uzair",
+      "icon": "build/icons"
     },
     "win": {
       "target": [
         "zip",
         "nsis",
         "portable"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

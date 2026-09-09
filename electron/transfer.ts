@@ -420,3 +420,95 @@ export function triggerBluetoothSend(filePath: string): Promise<{ success: boole
     }
   });
 }
+
+/**
+ * Download a backup file from a remote peer server using IP:Port and PIN
+ */
+export function downloadBackupFromRemote(
+  remoteAddress: string,
+  pin: string,
+  targetDirectory?: string
+): Promise<{ success: boolean; filePath?: string; fileName?: string; sizeBytes?: number; message?: string }> {
+  return new Promise((resolve) => {
+    let cleanAddress = remoteAddress.trim();
+    if (!cleanAddress.startsWith('http://') && !cleanAddress.startsWith('https://')) {
+      cleanAddress = `http://${cleanAddress}`;
+    }
+
+    try {
+      const urlObj = new URL(cleanAddress);
+      urlObj.pathname = '/download';
+      if (pin && pin.trim()) {
+        urlObj.searchParams.set('pin', pin.trim());
+      }
+
+      const saveDir = targetDirectory && fs.existsSync(targetDirectory)
+        ? targetDirectory
+        : path.join(os.homedir(), 'Downloads');
+
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
+
+      const req = http.get(urlObj.toString(), (res) => {
+        if (res.statusCode === 401) {
+          resolve({ success: false, message: 'Unauthorized: Invalid 4-Digit Security PIN entered.' });
+          return;
+        }
+
+        if (res.statusCode !== 200) {
+          resolve({ success: false, message: `Remote server responded with HTTP status ${res.statusCode}` });
+          return;
+        }
+
+        // Extract filename from Content-Disposition header if available
+        let fileName = 'transferred_backup.bacpac';
+        const disposition = res.headers['content-disposition'];
+        if (disposition && disposition.includes('filename=')) {
+          const match = disposition.match(/filename="?([^";]+)"?/i);
+          if (match && match[1]) {
+            fileName = match[1].trim();
+          }
+        }
+
+        const destinationPath = path.join(saveDir, fileName);
+        const fileStream = fs.createWriteStream(destinationPath);
+
+        let receivedBytes = 0;
+        res.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+        });
+
+        res.pipe(fileStream);
+
+        fileStream.on('finish', () => {
+          fileStream.close();
+          resolve({
+            success: true,
+            filePath: destinationPath,
+            fileName: fileName,
+            sizeBytes: receivedBytes,
+            message: `File downloaded successfully to ${destinationPath}`,
+          });
+        });
+
+        fileStream.on('error', (err) => {
+          fs.unlink(destinationPath, () => {});
+          resolve({ success: false, message: `Write error: ${err.message}` });
+        });
+      });
+
+      req.on('error', (err) => {
+        resolve({ success: false, message: `Connection error: Could not reach ${remoteAddress}. ${err.message}` });
+      });
+
+      req.setTimeout(15000, () => {
+        req.destroy();
+        resolve({ success: false, message: `Connection timed out after 15 seconds reaching ${remoteAddress}.` });
+      });
+    } catch (e: any) {
+      resolve({ success: false, message: `Invalid address format: ${e.message}` });
+    }
+  });
+}
+

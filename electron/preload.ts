@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testConnection: (config: any) => ipcRenderer.invoke('sqlpackage:test-connection', config),
   fetchDatabases: (config: any) => ipcRenderer.invoke('db:fetch-databases', config),
   fetchDatabaseSchema: (config: any, databaseName?: string) => ipcRenderer.invoke('db:fetch-schema', config, databaseName),
+  fetchDatabaseFiles: (config: any, databaseName?: string) => ipcRenderer.invoke('db:get-database-files', config, databaseName),
   fetchTableData: (config: any, schemaName: string, tableName: string, databaseName?: string, limit?: number) => ipcRenderer.invoke('db:fetch-table-data', config, schemaName, tableName, databaseName, limit),
   exportDatabase: (config: any) => ipcRenderer.invoke('sqlpackage:export', config),
   cancelExport: () => ipcRenderer.invoke('sqlpackage:cancel'),
@@ -49,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWiFiStatus: () => ipcRenderer.invoke('transfer:get-wifi-status'),
   getNetworkIPs: () => ipcRenderer.invoke('transfer:get-network-ips'),
   triggerBluetooth: (filePath: string) => ipcRenderer.invoke('transfer:trigger-bluetooth', filePath),
+  downloadFromRemote: (serverAddress: string, pin: string, targetDirectory?: string) => ipcRenderer.invoke('transfer:download-from-remote', serverAddress, pin, targetDirectory),
 
   // Log listeners
   onSqlpackageLog: (callback: (log: { type: string; timestamp: string; content: string }) => void) => {

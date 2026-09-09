@@ -12,12 +12,9 @@ import {
   ChevronDownIcon,
   PlayIcon,
   PaletteThemeIcon,
-  CheckIcon,
   DatabaseScannerIcon,
 } from './icons/FeatureIcons';
-import { SqlpackageStatus, EnvironmentInfo, ServerVersionInfo } from '../types';
-
-export type ThemeType = 'theme-lime-coral' | 'theme-mint-emerald' | 'theme-sage-plum' | 'theme-sunset-mint' | 'theme-olive-moss';
+import { SqlpackageStatus, EnvironmentInfo, ServerVersionInfo, ThemeType } from '../types';
 
 export interface ThemeOption {
   id: ThemeType;
@@ -27,6 +24,24 @@ export interface ThemeOption {
 }
 
 export const THEME_OPTIONS: ThemeOption[] = [
+  {
+    id: 'theme-pure-black',
+    name: 'OLED Pure Black',
+    gradientStr: 'linear-gradient(90deg, #00f2fe 0%, #4facfe 100%)',
+    bgHex: '#000000',
+  },
+  {
+    id: 'theme-pure-white',
+    name: 'Studio Pure White',
+    gradientStr: 'linear-gradient(90deg, #0284c7 0%, #0369a1 100%)',
+    bgHex: '#f8fafc',
+  },
+  {
+    id: 'theme-monochrome-pro',
+    name: 'Monochrome Pro',
+    gradientStr: 'linear-gradient(90deg, #fafafa 0%, #71717a 100%)',
+    bgHex: '#09090b',
+  },
   {
     id: 'theme-lime-coral',
     name: 'Bio-Pulse Lime Coral',
@@ -40,16 +55,16 @@ export const THEME_OPTIONS: ThemeOption[] = [
     bgHex: '#05140b',
   },
   {
-    id: 'theme-sage-plum',
-    name: 'Sage Plum Monolith',
-    gradientStr: 'linear-gradient(90deg, hsla(155, 23%, 71%, 1) 0%, hsla(302, 17%, 32%, 1) 100%)',
-    bgHex: '#120e13',
-  },
-  {
     id: 'theme-sunset-mint',
     name: 'Solar Sunset Mint',
     gradientStr: 'linear-gradient(90deg, hsla(154, 53%, 82%, 1) 0%, hsla(24, 88%, 65%, 1) 50%, hsla(216, 56%, 16%, 1) 100%)',
     bgHex: '#091118',
+  },
+  {
+    id: 'theme-sage-plum',
+    name: 'Sage Plum Monolith',
+    gradientStr: 'linear-gradient(90deg, hsla(155, 23%, 71%, 1) 0%, hsla(302, 17%, 32%, 1) 100%)',
+    bgHex: '#120e13',
   },
   {
     id: 'theme-olive-moss',
@@ -70,6 +85,7 @@ interface HeaderProps {
   onToggleGuideMode: () => void;
   onOpenTransferModal: () => void;
   onOpenSchemaModal?: () => void;
+  onOpenAppearanceModal?: () => void;
   currentTheme: ThemeType;
   onThemeChange: (theme: ThemeType) => void;
 }
@@ -85,6 +101,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleGuideMode,
   onOpenTransferModal,
   onOpenSchemaModal,
+  onOpenAppearanceModal,
   currentTheme,
   onThemeChange,
 }) => {
@@ -207,50 +224,52 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* ZONE 3: Right Tools & Theme Selector */}
       <div className="flex items-center space-x-2.5">
-        {/* 5-Theme Gradient Picker */}
-        <div className="relative" ref={themeMenuRef} data-tour-theme-switcher="true">
+        {/* Theme & Appearance Customizer Trigger */}
+        {onOpenAppearanceModal ? (
           <button
             type="button"
-            onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
-            className="flex items-center space-x-2 px-3 py-1.5 bg-theme-card hover:bg-theme-cardHover border border-theme-border rounded-xl text-xs font-medium text-theme-text transition shadow-sm"
-            title="Switch High-Contrast Theme Palette"
+            onClick={onOpenAppearanceModal}
+            className="flex items-center space-x-2 px-3 py-1.5 bg-theme-card hover:bg-theme-cardHover border border-theme-border rounded-xl text-xs font-medium text-theme-text transition shadow-sm hover:border-theme-accentPrimary/50 group"
+            title="Open Appearance, White/Black Themes, Typography & Font Sizing Customizer"
           >
-            <PaletteThemeIcon className="w-4 h-4 text-theme-accentPrimary" />
+            <PaletteThemeIcon className="w-4 h-4 text-theme-accentPrimary group-hover:rotate-12 transition-transform" />
             <div className="w-3.5 h-3.5 rounded-full border border-white/40 shadow-xs" style={{ background: activeThemeOpt.gradientStr }} />
             <span className="font-mono text-[11px] hidden sm:inline">{activeThemeOpt.name}</span>
-            <ChevronDownIcon className={`w-3 h-3 text-theme-muted transition-transform ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
+            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-white/10 text-theme-accentPrimary">Fonts & UI</span>
           </button>
-
-          {isThemeMenuOpen && (
-            <div className="absolute right-0 mt-2 w-64 bg-theme-surface border-2 border-theme-border rounded-xl shadow-2xl p-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-150">
-              <div className="px-2 py-1 text-[11px] font-mono text-theme-accentPrimary border-b border-theme-border mb-1">
-                Select Contrast Palette
-              </div>
-              {THEME_OPTIONS.map((theme) => {
-                const isSelected = theme.id === currentTheme;
-                return (
+        ) : (
+          <div className="relative" ref={themeMenuRef} data-tour-theme-switcher="true">
+            <button
+              type="button"
+              onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+              className="flex items-center space-x-2 px-3 py-1.5 bg-theme-card hover:bg-theme-cardHover border border-theme-border rounded-xl text-xs font-medium text-theme-text transition shadow-sm"
+              title="Switch Theme Palette"
+            >
+              <PaletteThemeIcon className="w-4 h-4 text-theme-accentPrimary" />
+              <div className="w-3.5 h-3.5 rounded-full border border-white/40 shadow-xs" style={{ background: activeThemeOpt.gradientStr }} />
+              <span className="font-mono text-[11px] hidden sm:inline">{activeThemeOpt.name}</span>
+              <ChevronDownIcon className={`w-3 h-3 text-theme-muted transition-transform ${isThemeMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isThemeMenuOpen && (
+              <div className="absolute right-0 mt-2 w-64 bg-theme-surface border-2 border-theme-border rounded-xl shadow-2xl p-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-150">
+                {THEME_OPTIONS.map((t) => (
                   <button
-                    key={theme.id}
+                    key={t.id}
                     type="button"
                     onClick={() => {
-                      onThemeChange(theme.id);
+                      onThemeChange(t.id);
                       setIsThemeMenuOpen(false);
                     }}
-                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left transition mb-0.5 ${
-                      isSelected ? 'bg-theme-card text-theme-text font-bold border border-theme-accentPrimary/50' : 'text-theme-muted hover:bg-theme-card/60 hover:text-theme-text'
-                    }`}
+                    className="w-full text-left p-2 rounded-lg hover:bg-theme-card flex items-center gap-2 text-theme-text"
                   >
-                    <div className="flex items-center space-x-2.5">
-                      <div className="w-4 h-4 rounded-full border border-white/30 shadow-xs shrink-0" style={{ background: theme.gradientStr }} />
-                      <span className="text-[11px] font-mono">{theme.name}</span>
-                    </div>
-                    {isSelected && <CheckIcon className="w-3.5 h-3.5 text-theme-accentPrimary" />}
+                    <div className="w-3.5 h-3.5 rounded-full shrink-0" style={{ background: t.gradientStr }} />
+                    <span className="text-[11px] font-mono">{t.name}</span>
                   </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Schema Visualizer Button */}
         {onOpenSchemaModal && (
